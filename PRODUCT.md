@@ -1,0 +1,2 @@
+# Scene Rehearsal
+The owner inspects and approves authored simulation behavior before implementation. Agents publish and revise through the CLI. The workbench prioritizes the scene, a shallow timeline and a contextual inspector. A warm, neutral drafting surface frames a muted 3D office. Blue identifies the active time and selection. The project is desktop-first with stacked inspection on narrow screens.
