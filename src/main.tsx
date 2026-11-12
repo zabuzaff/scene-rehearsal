@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useState, useCallback, type FormEven
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Dialog, Slider, Tabs, Toolbar, Tooltip } from 'radix-ui'
-import { evaluate, ticksPerSecond, type Manifest } from './model'
+import { evaluate, missingActivities, missingAsset, ticksPerSecond, type Manifest } from './model'
 import { lazy, Suspense, useRef } from 'react'
 import { defaultView, type View, type Pick } from './view'
 const Viewport = lazy(() => import('./Viewport'))
@@ -12,7 +12,7 @@ import './style.css'
 
 type Summary = { digest: string; parent: string | null; title: string }
 type Note = View & { id: number; revision: string; scenario: string; tick: number; end?: number; text: string; resolved: boolean } & Partial<Pick>
-type Revision = Summary & { scene: Manifest; owner: boolean; notes: Note[]; approvals: { kind: string; at: string }[] }
+type Revision = Summary & { scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; owner: boolean; notes: Note[]; approvals: { kind: string; at: string }[] }
 
 async function api<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch('/api/' + url, body === undefined ? undefined : {
@@ -22,6 +22,7 @@ async function api<T>(url: string, body?: unknown): Promise<T> {
   if (!response.ok) throw Error(data.error)
   return data
 }
+const activityLabels = { quiet: 'Quiet work', outbound: 'Outbound travel', inspect: 'Terminal inspection', return: 'Return travel' }
 const time = (tick: number) => (tick / ticksPerSecond).toFixed(1) + ' s'
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 
@@ -55,11 +56,11 @@ function Shell() {
     } catch (err) { setError(message(err)) }
   }
   return <Tooltip.Provider>
-    <header className="shell"><Link className="brand" to="/"><span className="brand-mark" aria-hidden/><span>Scene Rehearsal<span className="brand-period">.</span></span></Link>
+    <header className="shell"><Link viewTransition className="brand" to="/"><span className="brand-mark" aria-hidden/><span>Scene Rehearsal<span className="brand-period">.</span></span></Link>
       <span className="shell-divider" aria-hidden="true"/>
       <nav aria-label="Primary"><StudioSelect label="Open revision" variant="project" value={activeRevision} onOpenChange={refreshOnOpen}
         options={[{ value: '', label: 'Rehearsal library' }, ...revisions.map(rev => ({ value: rev.digest, label: rev.title, description: rev.digest.slice(0, 10) }))]}
-        onChange={id => navigate(id ? '/revision/' + id + '/first' : '/')}/></nav>
+        onChange={id => navigate(id ? '/revision/' + id + '/first' : '/', { viewTransition: true })}/></nav>
       {owner ? <span className="session">Owner session</span> : <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger asChild><button>Unlock review</button></Dialog.Trigger>
         <Dialog.Portal><Dialog.Overlay className="overlay"/><Dialog.Content className="dialog">
@@ -72,7 +73,7 @@ function Shell() {
     </header>
     <main key={location.pathname.split('/').slice(0, 3).join('/')} className="page">
       <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario" element={<Workbench owner={owner} revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>
-        <Route path="*" element={<section className="library"><h1>Page not found</h1><Link to="/">Return to library</Link></section>}/></Routes>
+        <Route path="*" element={<section className="library"><h1>Page not found</h1><Link viewTransition to="/">Return to library</Link></section>}/></Routes>
     </main>
     <footer>Scene Rehearsal <span>Local review workspace</span></footer>
   </Tooltip.Provider>
@@ -87,7 +88,7 @@ function Library() {
     {!data && !error && <p role="status">Loading rehearsals…</p>}
     {data && !data.revisions.length && <p>Publish a revision with the author CLI to open it here.</p>}
     {data && <ul className="revision-list">{data.revisions.map(rev => <li key={rev.digest}>
-      <Link to={'/revision/' + rev.digest + '/first'}><strong>{rev.title}</strong><span>{rev.digest.slice(0, 10)}{rev.digest === data.head ? ' · Current revision' : ''}</span><span aria-hidden>→</span></Link>
+      <Link viewTransition to={'/revision/' + rev.digest + '/first'}><strong>{rev.title}</strong><span>{rev.digest.slice(0, 10)}{rev.digest === data.head ? ' · Current revision' : ''}</span><span aria-hidden>→</span></Link>
     </li>)}</ul>}
   </section>
 }
@@ -171,15 +172,15 @@ function Workbench({ owner, revisions, onPickerOpen }: {
     // The clock starts from the current tick only when playback or speed changes.
   }, [playing, speed, scene?.duration])
 
-  if (loadError) return <section className="library"><h1>Rehearsal unavailable</h1><p role="alert">{loadError}</p><Link to="/">Return to library</Link></section>
+  if (loadError) return <section className="library"><h1>Rehearsal unavailable</h1><p role="alert">{loadError}</p><Link viewTransition to="/">Return to library</Link></section>
   if (!rev || !scene || !scenario) return <p role="status" className="library">Loading rehearsal…</p>
   if (routeScenario !== 'first' && !scene.scenarios.some(s => s.id === routeScenario)) {
-    return <section className="library"><h1>Scenario unavailable</h1><Link to={'/revision/' + digest + '/' + scenario.id}>Open {scenario.label}</Link></section>
+    return <section className="library"><h1>Scenario unavailable</h1><Link viewTransition to={'/revision/' + digest + '/' + scenario.id}>Open {scenario.label}</Link></section>
   }
 
   const state = evaluate(scene, scenario.id, tick)
   const setTime = (value: number) => { setPlaying(false); setTick(Math.min(scene.duration, Math.max(0, value))) }
-  const changeScenario = (id: string) => navigate('/revision/' + digest + '/' + id)
+  const changeScenario = (id: string) => navigate('/revision/' + digest + '/' + id, { viewTransition: true })
   const act = async (work: () => Promise<void>) => {
     setError('')
     setStatus('')
@@ -214,14 +215,14 @@ function Workbench({ owner, revisions, onPickerOpen }: {
   }
   const openNote = (note: Note) => {
     if (note.revision !== digest) {
-      navigate('/revision/' + note.revision + '/' + note.scenario + '?note=' + note.id)
+      navigate('/revision/' + note.revision + '/' + note.scenario + '?note=' + note.id, { viewTransition: true })
       return
     }
     setRestore(note)
     if (scenario.id !== note.scenario) changeScenario(note.scenario)
   }
   const mapped = scene.objects.filter(object => object.asset).length
-  const missing = scene.objects.filter(object => object.requiresAsset && !object.asset)
+  const missing = scene.objects.filter(missingAsset)
   const finalReady = Boolean(scene.room && !missing.length && readyScene === scene)
   return <section className="workbench">
     <div className="workbench-header"><div><h1>{scene.title}</h1>
@@ -256,11 +257,34 @@ function Workbench({ owner, revisions, onPickerOpen }: {
         <Tabs.Root value={tab} onValueChange={selectTab}>
           <Tabs.List className="tabs" aria-label="Inspect"><Tabs.Trigger value="events">Events</Tabs.Trigger><Tabs.Trigger value="objects">Objects</Tabs.Trigger><Tabs.Trigger value="notes">Feedback</Tabs.Trigger></Tabs.List>
           <Tabs.Content value="events" className="pane"><h2>{scenario.label}</h2><p className="activity">{state.activity}</p>
+            {scene.version === 2 && <dl className="scene-status">
+              {state.actors.map(actor => <div key={actor.id}><dt>{scene.objects.find(o => o.id === actor.id)?.label}</dt><dd>{actor.activity === 'quiet' ? scene.actors.find(a => a.id === actor.id)?.task : state.activity}</dd></div>)}
+              {state.evidence.map(item => <div key={item.station}><dt>{scene.objects.find(o => o.id === item.station)?.label}</dt><dd>{item.freshness} · {item.health}</dd></div>)}
+            </dl>}
             <p>Repeated events from the same feed merge during an active response.</p>
             {state.trace.length ? <ol className="event-list">{state.trace.map(event => <li key={event.id}><button onClick={() => setTime(event.tick)}>{time(event.tick)}</button><div>{event.result}<small>{event.feed}</small></div></li>)}</ol> : <p className="muted">No events have arrived at this point.</p>}
           </Tabs.Content>
           <Tabs.Content value="objects" className="pane"><h2>Scene objects</h2><ul className="objects">
-            {scene.objects.map(object => <li key={object.id}><button aria-pressed={pick?.object === object.id} onClick={() => setPick({ object: object.id, point: [0, .6, 0] })}>{object.label}</button>{pick?.object === object.id && object.asset && <p className="asset-id">Model <code>{object.asset.hash}</code><br/>Clip {object.asset.clip}</p>}</li>)}</ul>
+            {scene.objects.map(object => {
+              const asset = object.asset
+              const source = rev.sources.find(source => source.object === object.id)
+              const clips = asset && 'clips' in asset ? Object.entries(asset.clips ?? {}) : []
+              const missing = missingActivities(object)
+              const selected = pick?.object === object.id
+              return <li key={object.id}>
+                <button aria-pressed={selected} onClick={() => setPick({ object: object.id, point: [0, .6, 0] })}>{object.label}</button>
+                {missing.length > 0 && <p className="asset-id">Missing clips for {missing.map(beat => activityLabels[beat]).join(', ')}.</p>}
+                {selected && asset && <div className="asset-id">
+                  <p>Model <code>{asset.hash}</code>
+                    {source && <><br/>Mesh Foundry {source.project} / {source.asset} / {source.revision}</>}
+                  </p>
+                  {'clip' in asset ? <p>Clip {asset.clip}</p> :
+                    clips.length > 0 ? <dl className="scene-status">{clips.map(([beat, clip]) =>
+                      <div key={beat}><dt>{activityLabels[beat as keyof typeof activityLabels]}</dt><dd>{clip}</dd></div>)}</dl> :
+                      !missing.length && <p>Static model</p>}
+                </div>}
+              </li>
+            })}</ul>
             {pick && <><p>{pick.object ? scene.objects.find(o => o.id === pick.object)?.label : 'Floor position'} · {pick.point.map(value => value.toFixed(2)).join(', ')}</p><button onClick={() => { capturePin(); setTab('notes') }}>Pin feedback</button></>}
           </Tabs.Content>
           <Tabs.Content value="notes" className="pane"><h2>Review feedback</h2>
@@ -280,7 +304,7 @@ function Workbench({ owner, revisions, onPickerOpen }: {
           </Tabs.Content>
         </Tabs.Root>
         <section className="handoff"><h2>Revision handoff</h2>
-          {missing.length > 0 && <p className="muted">Required asset missing for {missing.map(o => o.label).join(', ')}.</p>}
+          {missing.length > 0 && <p className="muted">Required model or clip missing for {missing.map(o => o.label).join(', ')}.</p>}
           {!scene.room && <p className="muted">Publish a new revision to include the room in final approval.</p>}
           {scene.room && !missing.length && !finalReady && <p className="muted">Final approval requires a rendered scene with all mapped models and clips.</p>}
           {owner && <><Disclosure title="Import Mesh Foundry model"><form onSubmit={event => {
@@ -289,10 +313,18 @@ function Workbench({ owner, revisions, onPickerOpen }: {
             void act(async () => {
               const file = fields.get('bundle')
               if (!(file instanceof File) || !file.size || file.size > 180_000_000) throw Error('Choose a Mesh Foundry bundle under 180 MB.')
-              const result = await api<{ hash: string; clips: string[] }>('assets/import', { asset: fields.get('asset'), bundle: JSON.parse(await file.text()) })
-              setStatus('Imported ' + result.hash + '. Clips: ' + result.clips.join(', ') + '. Publish a revision mapping the model through the CLI.')
+              const asset = fields.get('asset')
+              const expected = scene.version === 2 ? { asset, project: fields.get('project'),
+                revision: fields.get('revision'), hash: fields.get('hash') } : undefined
+              const result = await api<{ hash: string; sourceKey: string; clips: string[] }>('assets/import', { asset, expected, bundle: JSON.parse(await file.text()) })
+              setStatus('Imported ' + result.hash + (scene.version === 2 ? '. Source key: ' + result.sourceKey : '') + '. Clips: ' + result.clips.join(', ') + '. Publish a revision mapping the model through the CLI.')
             })
-          }}><label>Project bundle<input type="file" name="bundle" accept=".json" required/></label><label>Asset ID<input name="asset" required/></label><button>Import model</button></form></Disclosure>
+          }}><label>Project bundle<input type="file" name="bundle" accept=".json" required/></label><label>Asset ID<input name="asset" required/></label>{scene.version === 2 && <>
+              <p>Enter the exact accepted model details from the owner-controlled Mesh Foundry project record.</p>
+              <label>Mesh Foundry project ID<input name="project" required/></label>
+              <label>Accepted model revision ID<input name="revision" required/></label>
+              <label>GLB SHA-256<input name="hash" pattern="[0-9a-f]{64}" required/></label>
+            </>}<button>Import model</button></form></Disclosure>
           <div className="actions"><button onClick={event => requestApproval(event, 'blockout')}>Approve blockout</button><button disabled={!finalReady} onClick={event => requestApproval(event, 'final')}>Approve final</button></div>
           {scene.room && rev.approvals.some(a => a.kind === 'final') && <button className="primary" onClick={() => void act(async () => {
             const result = await api<{ digest: string; package: unknown }>('revision/' + digest + '/export', {})

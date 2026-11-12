@@ -7,16 +7,18 @@ import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { defaultRoom, fixture, manifestSchema, noteSchema, sha } from './src/model.ts'
-import { canonical, hash } from './src/handoff.ts'
+import { assetClips, defaultRoom, fixture, missingAsset, manifestSchema, noteSchema, sha, type SceneObject } from './src/model.ts'
+import { canonical, hash, sourceIdentity, sourceKey, sourceSchema } from './src/handoff.ts'
 import { readAcceptedModel } from './src/mesh.ts'
 
 const root = process.env.SCENE_REHEARSAL_DATA_DIR ?? join(homedir(), 'Library/Application Support/Scene Rehearsal')
 const port = Number(process.env.SCENE_REHEARSAL_PORT ?? 4331)
 if (!isAbsolute(root) || !Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Invalid local configuration.')
+const initialize = process.env.SCENE_REHEARSAL_INIT === 'empty'
+if (initialize && !process.env.SCENE_REHEARSAL_DATA_DIR) throw Error('Empty initialization requires an explicit data directory.')
 const origin = 'http://127.0.0.1:' + port
 if (process.argv.includes('--status')) {
-  console.log(JSON.stringify({ root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite') }))
+  console.log(JSON.stringify({ root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite'), initialize }))
   process.exit(0)
 }
 mkdirSync(root, { recursive: true, mode: 0o700 })
@@ -26,12 +28,14 @@ mkdirSync(blobDir, { mode: 0o700, recursive: true })
 const db = new DatabaseSync(join(root, 'review.sqlite'))
 db.exec(`
   PRAGMA journal_mode = WAL;
+  CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS revisions (digest TEXT PRIMARY KEY, parent TEXT, scene TEXT NOT NULL, links TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS head (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, revision TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, revision TEXT NOT NULL, data TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS note_decisions (id INTEGER PRIMARY KEY, note INTEGER NOT NULL, resolved INTEGER NOT NULL, at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approvals (revision TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(revision,kind));
+  CREATE TABLE IF NOT EXISTS asset_sources (key TEXT PRIMARY KEY, source TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS assets (hash TEXT PRIMARY KEY, source TEXT NOT NULL);
 `)
 const head = () => db.prepare('SELECT digest FROM head').get()?.digest as string | undefined
@@ -52,7 +56,13 @@ function saveRevision(parent: string | null, scene: z.infer<typeof manifestSchem
   db.prepare('INSERT INTO head VALUES(1,?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest').run(digest)
   return digest
 }
-transaction(() => { if (!head()) saveRevision(null, manifestSchema.parse(fixture), []) })
+const emptyLibrary = transaction(() => {
+  const optedIn = Boolean(db.prepare("SELECT name FROM settings WHERE name='empty-library'").get())
+  if (initialize && !optedIn && head()) throw Error('Cannot initialize a library with revision history.')
+  if (initialize) db.prepare("INSERT OR IGNORE INTO settings VALUES('empty-library')").run()
+  if (!head() && !initialize && !optedIn) saveRevision(null, manifestSchema.parse(fixture), [])
+  return initialize || optedIn
+})
 const tokenPath = join(root, 'author.token')
 if (!existsSync(tokenPath)) writeFileSync(tokenPath, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' })
 const authorToken = readFileSync(tokenPath, 'utf8')
@@ -76,19 +86,31 @@ function revision(id: string) {
 }
 const params = z.object({ digest: sha })
 const getRevision = (input: unknown) => revision(params.parse(input).digest)
+function resolveSource(asset: NonNullable<SceneObject['asset']>) {
+  const legacy = db.prepare('SELECT source FROM assets WHERE hash=?').get(asset.hash)
+  const key = 'source' in asset ? asset.source : undefined
+  const row = key ? db.prepare('SELECT source FROM asset_sources WHERE key=?').get(key) : legacy
+  const record = row ? sourceSchema.parse(JSON.parse(String(row.source))) : undefined
+  if (record?.hash === asset.hash) return record
+  if (!row && key && legacy) {
+    const fallback = sourceSchema.parse(JSON.parse(String(legacy.source)))
+    if (sourceKey(fallback) === key) return fallback
+  }
+}
+
 function mappings(rev: ReturnType<typeof revision>, required: boolean) {
-  const result = new Map()
+  const result = new Map<string, { source: z.infer<typeof sourceSchema>; file: Buffer; legacy: boolean }>()
   for (const object of rev.scene.objects) {
-    if (!object.asset) {
-      if (required && object.requiresAsset) throw bad('Map the required asset for ' + object.label + '.')
-      continue
-    }
-    const row = db.prepare('SELECT source FROM assets WHERE hash=?').get(object.asset.hash)
-    if (!row) throw bad('Mapped asset not found.')
-    const source = JSON.parse(String(row.source))
+    if (required && missingAsset(object)) throw bad('Complete the required asset and clip mappings for ' + object.label + '.')
+    if (!object.asset) continue
+    const source = resolveSource(object.asset)
+    if (!source) throw bad('Mapped asset not found.')
+    if (rev.scene.version === 2 && !source.ownerChecked) throw bad('Confirm the Mesh Foundry source record for ' + object.label + '.')
     const file = readFileSync(join(blobDir, source.hash))
-    if (!source.clips.includes(object.asset.clip) || hash(file) !== source.hash) throw bad('Mapped asset or clip is invalid.')
-    result.set(source.hash, { source, file })
+    if (assetClips(object.asset).some(clip => !source.clips.includes(clip)) || hash(file) !== source.hash) throw bad('Mapped asset or clip is invalid.')
+    const key = sourceKey(source)
+    const explicit = 'source' in object.asset && object.asset.source
+    result.set(key, { source, file, legacy: !explicit || result.get(key)?.legacy === true })
   }
   return result
 }
@@ -113,7 +135,12 @@ app.get('/api/revision/:digest', async req => {
   const notes = db.prepare(`SELECT n.id,n.revision,n.data,
     COALESCE((SELECT resolved FROM note_decisions WHERE note=n.id ORDER BY id DESC LIMIT 1),0) AS resolved
     FROM notes n ORDER BY n.id`).all()
-  return { ...rev, owner: owner(req.headers.cookie), notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
+  const sources = rev.scene.objects.flatMap(object => {
+    if (!object.asset) return []
+    const source = resolveSource(object.asset)
+    return source ? [{ ...source, object: object.id }] : []
+  })
+  return { ...rev, sources, owner: owner(req.headers.cookie), notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
     .map(n => ({ id: n.id, revision: n.revision, resolved: Boolean(n.resolved), ...JSON.parse(String(n.data)) })),
     approvals: db.prepare('SELECT kind,at FROM approvals WHERE revision=?').all(rev.digest) }
 })
@@ -133,7 +160,7 @@ app.post('/api/enroll', async (req, reply) => {
 })
 app.post('/api/publish', async req => {
   requireRole(req.headers.authorization === 'Bearer ' + authorToken)
-  const input = z.strictObject({ request: z.string().min(1).max(100), parent: sha, scene: manifestSchema, links: z.array(z.number().int().positive()).max(200).default([]) }).parse(req.body)
+  const input = z.strictObject({ request: z.string().min(1).max(100), parent: sha.nullable(), scene: manifestSchema, links: z.array(z.number().int().positive()).max(200).default([]) }).parse(req.body)
   return transaction(() => {
     const checksum = hash(canonical(input))
     const previous = db.prepare('SELECT * FROM receipts WHERE id=?').get(input.request)
@@ -141,13 +168,16 @@ app.post('/api/publish', async req => {
       if (previous.request_hash !== checksum) throw bad('Request ID already used.', 409)
       return { revision: previous.revision }
     }
-    if (head() !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
+    if (input.parent === null && !emptyLibrary) throw bad('Root publication requires empty library initialization.', 409)
+    if ((head() ?? null) !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
     for (const link of input.links) if (!db.prepare('SELECT id FROM notes WHERE id=?').get(link)) throw bad('Linked note not found.')
-    const requiredSlots = revision(input.parent).scene.objects.filter(object => object.requiresAsset)
-    if (requiredSlots.some(slot => !input.scene.objects.some(object => object.id === slot.id && object.requiresAsset))) {
+    const requiredSlots = input.parent ? revision(input.parent).scene.objects.filter(object => object.requiresAsset) : []
+    if (requiredSlots.some(slot => !input.scene.objects.some(object => object.id === slot.id && object.requiresAsset && object.kind === slot.kind &&
+      (!('requiredActivities' in slot) || (slot.requiredActivities ?? []).every(beat =>
+        'requiredActivities' in object && object.requiredActivities?.includes(beat)))))) {
       throw bad('This revision must preserve required asset slots.')
     }
-    const scene = { ...input.scene, room: input.scene.room ?? defaultRoom }
+    const scene = input.scene.version === 1 ? { ...input.scene, room: input.scene.room ?? defaultRoom } : input.scene
     const digest = saveRevision(input.parent, scene, input.links)
     mappings(revision(digest), false)
     db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.request, checksum, digest)
@@ -188,26 +218,47 @@ app.post('/api/revision/:digest/export', async req => {
   if (!approval) throw bad('Final approval is required.')
   const assets = []
   const blobs: Record<string, string> = {}
-  for (const [digest, entry] of mappings(rev, true)) {
-    const path = 'assets/' + digest + '.glb'
-    assets.push({ path, source: entry.source })
+  const entries = [...mappings(rev, true).values()]
+  const hashCounts = new Map<string, number>()
+  for (const { source } of entries) hashCounts.set(source.hash, (hashCounts.get(source.hash) ?? 0) + 1)
+  for (const entry of entries) {
+    const path = 'assets/' + entry.source.hash + '.glb'
+    const { ownerChecked, ...source } = entry.source
+    assets.push({ path, source: rev.scene.version === 2 ? { ...source, ownerChecked } : source,
+      ...(entry.legacy && (hashCounts.get(source.hash) ?? 0) > 1 ? { legacy: true } : {}) })
     blobs[path] = entry.file.toString('base64')
   }
-  const manifest = { format: 'scene-rehearsal-1', revision: rev.digest, parent: rev.parent, links: rev.links, scene: rev.scene, approval, assets }
+  const manifest = { format: 'scene-rehearsal-' + rev.scene.version, revision: rev.digest, parent: rev.parent, links: rev.links, scene: rev.scene, approval, assets }
   return { digest: hash(canonical(manifest)), package: { manifest, blobs } }
 })
 app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {
   requireRole(owner(req.headers.cookie))
-  const { bundle, asset } = z.object({ bundle: z.unknown(), asset: z.string().min(1) }).parse(req.body)
+  const { bundle, asset, expected } = z.object({
+    bundle: z.unknown(), asset: z.string().min(1), expected: sourceIdentity.optional(),
+  }).parse(req.body)
   const { bytes, source } = await readAcceptedModel(bundle, asset)
+  if (expected && (source.project !== expected.project || source.asset !== expected.asset ||
+    source.revision !== expected.revision || source.hash !== expected.hash)) {
+    throw bad('The bundle does not match the owner-confirmed Mesh Foundry model revision.')
+  }
+  const key = sourceKey(source)
   const destination = join(blobDir, source.hash)
   const pending = destination + '.' + randomBytes(8).toString('hex')
   writeFileSync(pending, bytes, { flag: 'wx', mode: 0o600 })
   renameSync(pending, destination)
-  const previous = db.prepare('SELECT source FROM assets WHERE hash=?').get(source.hash)
-  if (previous && String(previous.source) !== JSON.stringify(source)) throw bad('These bytes already have a different source record.', 409)
-  db.prepare('INSERT OR IGNORE INTO assets VALUES(?,?)').run(source.hash, JSON.stringify(source))
-  return source
+  return transaction(() => {
+    const known = resolveSource({ hash: source.hash, source: key })
+    const record = sourceSchema.parse({ ...source, ownerChecked: expected || known?.ownerChecked ? true : undefined })
+    const serialized = JSON.stringify(record)
+    db.prepare('INSERT INTO asset_sources VALUES(?,?) ON CONFLICT(key) DO UPDATE SET source=excluded.source')
+      .run(key, serialized)
+    db.prepare('INSERT OR IGNORE INTO assets VALUES(?,?)').run(source.hash, serialized)
+    const legacy = resolveSource({ hash: source.hash })
+    if (legacy && sourceKey(legacy) === key && record.ownerChecked && !legacy.ownerChecked) {
+      db.prepare('UPDATE assets SET source=? WHERE hash=?').run(serialized, source.hash)
+    }
+    return { ...record, sourceKey: key }
+  })
 })
 app.get('/api/assets/:digest', async (req, reply) => {
   const { digest } = params.parse(req.params)

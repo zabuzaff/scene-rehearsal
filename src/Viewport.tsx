@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as T from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-import { defaultRoom, evaluate, ticksPerSecond, type Manifest } from './model'
+import { assetClips, defaultRoom, evaluate, ticksPerSecond, type Manifest } from './model'
 
 import type { Vec, View, Pick } from './view'
 
@@ -78,9 +78,10 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     for (const part of manifest.room ?? defaultRoom) box(scene, part.size, part.position, part.color)
     const grid = new T.GridHelper(8, 16, 0x78817e, 0x8e9990)
     grid.position.y = -.03
-    scene.add(grid)
+    if (manifest.version === 1) scene.add(grid)
+    else { grid.geometry.dispose(); grid.material.dispose() }
     const groups = new Map<string, T.Group>()
-    const mixers = new Map<string, { mixer: T.AnimationMixer; duration: number }>()
+    const mixers = new Map<string, { mixer: T.AnimationMixer; actions: Map<string, T.AnimationAction> }>()
     const dispose = (root: T.Object3D) => root.traverse(node => {
       if (node instanceof T.Mesh || node instanceof T.Line || node instanceof T.LineSegments) {
         node.geometry.dispose()
@@ -100,25 +101,29 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
       primitive(object, group)
       scene.add(group)
       groups.set(object.id, group)
-      if (object.asset) {
-        new GLTFLoader().load('/api/assets/' + object.asset.hash, gltf => {
+      const asset = object.asset
+      if (asset) {
+        new GLTFLoader().load('/api/assets/' + asset.hash, gltf => {
           if (!active) { dispose(gltf.scene); return }
-          const clip = gltf.animations.find(a => a.name === object.asset?.clip)
-          if (clip) {
-            for (const child of [...group.children]) { group.remove(child); dispose(child) }
-            group.add(gltf.scene)
-            pending -= 1
-            const mixer = new T.AnimationMixer(gltf.scene)
-            mixer.clipAction(clip).play()
-            mixers.set(object.id, { mixer, duration: clip.duration })
-          } else {
+          const names = assetClips(asset)
+          const clips = gltf.animations.filter(clip => names.includes(clip.name))
+          if (!names.every(name => clips.some(clip => clip.name === name))) {
             dispose(gltf.scene)
             setError('Mapped clip unavailable for ' + object.label)
+            return
+          }
+          for (const child of [...group.children]) { group.remove(child); dispose(child) }
+          group.add(gltf.scene)
+          pending -= 1
+          if (clips.length) {
+            const mixer = new T.AnimationMixer(gltf.scene)
+            const actions = new Map(clips.map(clip => [clip.name, mixer.clipAction(clip).play()]))
+            mixers.set(object.id, { mixer, actions })
           }
         }, undefined, () => { if (active) setError('Mapped asset unavailable for ' + object.label) })
       }
     }
-    const path = new T.Line(new T.BufferGeometry().setFromPoints(manifest.route.map(([x, y, z]) => new T.Vector3(x, y + .025, z))),
+    const path = new T.Line(new T.BufferGeometry().setFromPoints((manifest.version === 1 ? manifest.route : manifest.outbound.map(p => p.position)).map(([x, y, z]) => new T.Vector3(x, y + .025, z))),
       new T.LineBasicMaterial({ color: 0x4a7789 }))
     scene.add(path)
     const marker = new T.Mesh(new T.SphereGeometry(.11, 12, 8), new T.MeshBasicMaterial({ color: 0xabbcff }))
@@ -161,21 +166,40 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     renderer.setAnimationLoop(() => {
       const frame = current.current
       const state = evaluate(manifest, frame.scenario, frame.tick)
-      const responder = groups.get(manifest.responder)
-      responder?.position.fromArray(state.position)
       const walking = state.activity.startsWith('Walking') || state.activity.startsWith('Returning')
-      if (responder) {
-        const next = evaluate(manifest, frame.scenario, frame.tick + 1).position
-        if (walking) responder.rotation.y = Math.atan2(next[0] - state.position[0], next[2] - state.position[2])
-        else responder.rotation.y = Math.PI
-        for (const leg of responder.children.filter(node => node.name.endsWith('-leg'))) {
-          leg.rotation.x = walking ? Math.sin(frame.tick * .6) * (leg.name === 'left-leg' ? .45 : -.45) : 0
+      if (manifest.version === 1) {
+        const responder = groups.get(manifest.responder)
+        if (responder) {
+          const next = evaluate(manifest, frame.scenario, frame.tick + 1).position
+          responder.position.fromArray(state.position)
+          responder.rotation.y = walking ? Math.atan2(next[0] - state.position[0], next[2] - state.position[2]) : Math.PI
         }
       }
-      for (const [id, { mixer, duration }] of mixers) {
-        if (duration <= 0) continue
-        const elapsed = id !== manifest.responder || walking ? frame.tick / ticksPerSecond : 0
-        mixer.setTime(elapsed % duration)
+      for (const actor of state.actors) {
+        const group = groups.get(actor.id)
+        group?.position.fromArray(actor.position)
+        if (group) group.rotation.y = actor.heading
+      }
+      for (const object of manifest.objects) {
+        const actor = state.actors.find(actor => actor.id === object.id)
+        const moving = actor ? actor.activity === 'outbound' || actor.activity === 'return' :
+          object.id === manifest.responder && walking
+        const group = groups.get(object.id)
+        for (const leg of group?.children.filter(node => node.name.endsWith('-leg')) ?? []) {
+          leg.rotation.x = moving ? Math.sin(frame.tick * .6) * (leg.name === 'left-leg' ? .45 : -.45) : 0
+        }
+        const animation = mixers.get(object.id)
+        const asset = object.asset
+        if (!animation || !asset) continue
+        const clip = 'clip' in asset ? asset.clip : actor && asset.clips?.[actor.activity]
+        const seconds = (actor?.clipTick ?? (object.id !== manifest.responder || walking ? frame.tick : 0)) / ticksPerSecond
+        for (const [name, action] of animation.actions) {
+          action.enabled = name === clip
+          action.paused = true
+          const duration = action.getClip().duration
+          action.time = duration > 0 ? seconds % duration : 0
+        }
+        animation.mixer.update(0)
       }
       marker.visible = Boolean(frame.pin)
       if (frame.pin) {

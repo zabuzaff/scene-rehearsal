@@ -37,3 +37,24 @@ Use **Import Mesh Foundry model** with a Mesh Foundry project bundle and the acc
 Run `npm run typecheck`, `npm test`, and `npm run build`. Use an isolated local library when exercising writes in automated tests.
 
 [Development plan](docs/DEVELOPMENT_PLAN.md)
+
+## Kairo rehearsal draft
+
+The [Kairo plan](docs/KAIRO_REHEARSAL_PLAN.md) and [authored draft](fixtures/kairo-office.json) cover the two-station office with synthetic quiet, interruption and recovery scenarios. To publish it locally, use an empty dedicated library. The initialization flag is needed on first startup only. Use the same data directory and port for the CLI and later starts.
+
+```sh
+export SCENE_REHEARSAL_DATA_DIR=/private/tmp/kairo-rehearsal-local
+export SCENE_REHEARSAL_PORT=4332
+SCENE_REHEARSAL_INIT=empty npm start -- --status
+SCENE_REHEARSAL_INIT=empty npm start
+```
+
+In a second terminal from this checkout:
+
+```sh
+export SCENE_REHEARSAL_DATA_DIR=/private/tmp/kairo-rehearsal-local
+export SCENE_REHEARSAL_PORT=4332
+npm run cli -- publish "$PWD/fixtures/kairo-office.json"
+```
+
+Open http://127.0.0.1:4332 and select **Kairo · Research and collector office**. Review access uses the same terminal-issued code described above. The draft shows placeholders for the two required character models. Before importing, compare the selected model against the owner-controlled Mesh Foundry record and enter the exact project, asset, model revision and GLB hash. Publish a child with an asset binding for each required slot. Version 2 uses `{ "hash": "...", "clips": { "quiet": "Clip name" } }` with each required activity mapped. Set `source` to the source key shown after import to pin the exact Mesh Foundry revision, including when two revisions share GLB bytes. Older hash-only bindings continue to resolve to the first source for that hash. Static models omit `clips`. Final approval and the separately confirmed export digest remain owner actions.

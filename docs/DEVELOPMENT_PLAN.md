@@ -53,3 +53,11 @@ No unresolved product decision blocks starting implementation. Exact package pin
 ## Implementation notes
 
 Use React Router for the shared shell and revision/scenario URLs. Split the Three.js viewport from the route bundle. Use Khronos glTF Validator during Mesh Foundry import in addition to matching the exported hash and clip. The tested adapter consumes the documented mesh-foundry-1 project bundle with accepted model pointers and base64 GLB bytes. The first library holds one rehearsal and its revision history. The normal startup seeds a blockout only when the revision store is empty.
+
+## Full delivery and release acceptance
+
+The Kairo rehearsal remains a benchmark. Finish its asset-backed owner review and verified export before implementing the approved rehearsal in Kairo. Treat missing accepted assets and the owner's approval as gates on that benchmark.
+
+For general use, support a rehearsal with a different actor and station layout, and connect Scene Loom and Mesh Foundry's copy-ready prompts to the Scene Rehearsal authoring workflow. Keep Kairo references out of the default prompts and onboarding. Retain the benchmark as an optional regression fixture.
+
+After the implementation slices, run a fresh end-to-end acceptance test. Start from a new, unrelated Scene Loom project and its actual Copy prompt button, then paste the prompts into a fresh agent session. Follow the relevant Mesh Foundry prompt and owner acceptance steps, publish the rehearsal through its normal entry point, and complete owner review and verified export. Use only the copied prompts and the records they reference. A successful Kairo run does not satisfy this release check.

@@ -130,3 +130,13 @@ summary{cursor:pointer;font-size:.85rem}
 @media(prefers-reduced-motion:reduce){
   .select-chevron,.studio-disclosure button svg{transition:none}
 }
+
+:root{view-transition-name:none}
+.page{view-transition-name:rehearsal-page}
+::view-transition-old(rehearsal-page),::view-transition-new(rehearsal-page){animation-duration:140ms}
+.scene-status{display:grid;gap:.55rem;margin-block:1rem}
+.scene-status div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.25rem .75rem}
+.scene-status dd{margin:0}
+@media(prefers-reduced-motion:reduce){
+  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none}
+}

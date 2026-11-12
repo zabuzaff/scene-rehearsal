@@ -8,6 +8,7 @@ const bundle = z.object({
   format: z.literal('mesh-foundry-1'),
   project: z.object({
     schemaVersion: z.literal(1), id: z.string(),
+    acceptance: z.array(z.object({ revisionId: z.string(), previousRevisionId: z.string().optional() })).default([]),
     accepted: z.record(z.string(), z.string()),
     revisions: z.array(z.object({
       id: z.string(), assetId: z.string(), stage: z.string(), files: z.array(file),
@@ -18,7 +19,12 @@ const bundle = z.object({
 
 export async function readAcceptedModel(input: unknown, asset: string) {
   const { project, blobs } = bundle.parse(input)
-  const rev = project.revisions.find(r => r.assetId === asset && r.id === project.accepted[asset] && r.stage === 'model')
+  const models = new Map(project.revisions.filter(r => r.assetId === asset && r.stage === 'model').map(r => [r.id, r]))
+  const history = [...project.acceptance].reverse()
+  const approved = models.get(project.accepted[asset]) ??
+    models.get(history.find(event => models.has(event.revisionId))?.revisionId ?? '') ??
+    models.get(history.find(event => event.previousRevisionId && models.has(event.previousRevisionId))?.previousRevisionId ?? '')
+  const rev = approved
   const glb = rev?.files.find(f => f.kind === 'model')
   if (!rev || !glb || !Object.hasOwn(blobs, glb.hash)) throw Error('The bundle has no accepted model for this asset.')
   const bytes = Buffer.from(blobs[glb.hash], 'base64')

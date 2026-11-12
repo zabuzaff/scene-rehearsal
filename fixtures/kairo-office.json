@@ -1,0 +1,522 @@
+{
+  "request": "kairo-office-root-v2",
+  "parent": null,
+  "scene": {
+    "version": 2,
+    "title": "Kairo · Research and collector office",
+    "unit": "meter",
+    "up": "Y",
+    "duration": 275,
+    "room": [
+      {
+        "id": "floor",
+        "size": [
+          10,
+          0.16,
+          7.4
+        ],
+        "position": [
+          0,
+          -0.08,
+          0
+        ],
+        "color": 11449769
+      },
+      {
+        "id": "back-wall",
+        "size": [
+          10,
+          2.4,
+          0.16
+        ],
+        "position": [
+          0,
+          1.2,
+          -3.7
+        ],
+        "color": 12962231
+      },
+      {
+        "id": "side-wall",
+        "size": [
+          0.16,
+          2.4,
+          7.4
+        ],
+        "position": [
+          -5,
+          1.2,
+          0
+        ],
+        "color": 13945787
+      },
+      {
+        "id": "window",
+        "size": [
+          3,
+          1.25,
+          0.05
+        ],
+        "position": [
+          -1.7,
+          1.5,
+          -3.59
+        ],
+        "color": 4746098
+      }
+    ],
+    "objects": [
+      {
+        "id": "researcher",
+        "label": "Researcher",
+        "kind": "researcher",
+        "position": [
+          -2,
+          0,
+          1
+        ],
+        "requiresAsset": true,
+        "requiredActivities": [
+          "quiet",
+          "outbound",
+          "inspect",
+          "return"
+        ]
+      },
+      {
+        "id": "observer",
+        "label": "Evidence reviewer",
+        "kind": "researcher",
+        "position": [
+          0.8,
+          0,
+          1
+        ],
+        "requiresAsset": true,
+        "requiredActivities": [
+          "quiet"
+        ]
+      },
+      {
+        "id": "research-desk",
+        "label": "SOL 1h breakout research desk",
+        "kind": "desk",
+        "position": [
+          -2,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "review-desk",
+        "label": "Evidence desk",
+        "kind": "desk",
+        "position": [
+          0.8,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "research-seat",
+        "label": "Research chair",
+        "kind": "chair",
+        "position": [
+          -2,
+          0,
+          1.5
+        ]
+      },
+      {
+        "id": "review-seat",
+        "label": "Evidence chair",
+        "kind": "chair",
+        "position": [
+          0.8,
+          0,
+          1.5
+        ]
+      },
+      {
+        "id": "collector-terminal",
+        "label": "SOL 1h collector terminal",
+        "kind": "terminal",
+        "position": [
+          2.8,
+          0,
+          -2.8
+        ]
+      }
+    ],
+    "actors": [
+      {
+        "id": "researcher",
+        "station": "research-desk",
+        "task": "Reviewing recorded SOL 1h breakout evidence",
+        "position": [
+          -2,
+          0,
+          1
+        ],
+        "heading": 3.141592653589793
+      },
+      {
+        "id": "observer",
+        "station": "collector-terminal",
+        "task": "Monitoring the evidence feed",
+        "position": [
+          0.8,
+          0,
+          1
+        ],
+        "heading": 3.141592653589793
+      }
+    ],
+    "stations": [
+      {
+        "id": "research-desk",
+        "feed": "x1-sol-1h-breakout",
+        "reference": "Kairo stations.ts · SOL-1h-breakout · lab.candidates",
+        "approach": {
+          "position": [
+            -2,
+            0,
+            1
+          ],
+          "heading": 3.141592653589793
+        }
+      },
+      {
+        "id": "collector-terminal",
+        "feed": "sol-1h",
+        "reference": "Kairo stations.ts · lab.health.collectors · SOLUSDT / 1h",
+        "approach": {
+          "position": [
+            2.8,
+            0,
+            -1.8
+          ],
+          "heading": 3.141592653589793
+        }
+      }
+    ],
+    "responder": "researcher",
+    "station": "collector-terminal",
+    "inspectTicks": 25,
+    "outbound": [
+      {
+        "position": [
+          -2,
+          0,
+          1
+        ],
+        "heading": 3.141592653589793,
+        "tick": 0
+      },
+      {
+        "position": [
+          -2,
+          0,
+          1
+        ],
+        "heading": -1.5707963267948966,
+        "tick": 3
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          1
+        ],
+        "heading": -1.5707963267948966,
+        "tick": 12
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          1
+        ],
+        "heading": 3.141592653589793,
+        "tick": 16
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          -1.8
+        ],
+        "heading": 3.141592653589793,
+        "tick": 31
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          -1.8
+        ],
+        "heading": 1.5707963267948966,
+        "tick": 35
+      },
+      {
+        "position": [
+          2.8,
+          0,
+          -1.8
+        ],
+        "heading": 1.5707963267948966,
+        "tick": 64
+      },
+      {
+        "position": [
+          2.8,
+          0,
+          -1.8
+        ],
+        "heading": 3.141592653589793,
+        "tick": 68
+      }
+    ],
+    "returning": [
+      {
+        "position": [
+          2.8,
+          0,
+          -1.8
+        ],
+        "heading": 3.141592653589793,
+        "tick": 0
+      },
+      {
+        "position": [
+          2.8,
+          0,
+          -1.8
+        ],
+        "heading": -1.5707963267948966,
+        "tick": 4
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          -1.8
+        ],
+        "heading": -1.5707963267948966,
+        "tick": 34
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          -1.8
+        ],
+        "heading": 0,
+        "tick": 38
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          1
+        ],
+        "heading": 0,
+        "tick": 54
+      },
+      {
+        "position": [
+          -3.4,
+          0,
+          1
+        ],
+        "heading": 1.5707963267948966,
+        "tick": 58
+      },
+      {
+        "position": [
+          -2,
+          0,
+          1
+        ],
+        "heading": 1.5707963267948966,
+        "tick": 65
+      },
+      {
+        "position": [
+          -2,
+          0,
+          1
+        ],
+        "heading": 3.141592653589793,
+        "tick": 68
+      }
+    ],
+    "scenarios": [
+      {
+        "id": "quiet",
+        "label": "Quiet research",
+        "events": [
+          {
+            "kind": "evidence",
+            "id": "desk-ready",
+            "tick": 5,
+            "station": "research-desk",
+            "feed": "x1-sol-1h-breakout",
+            "health": "healthy",
+            "freshness": "current"
+          },
+          {
+            "kind": "evidence",
+            "id": "collector-ready",
+            "tick": 5,
+            "station": "collector-terminal",
+            "feed": "sol-1h",
+            "health": "healthy",
+            "freshness": "current"
+          }
+        ],
+        "checkpoints": [
+          {"tick":0,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":0}],"evidence":[{"station":"research-desk","health":"unknown","freshness":"loading"},{"station":"collector-terminal","health":"unknown","freshness":"loading"}],"trace":[]},
+          {"tick":5,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":5},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":5}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"}]},
+          {"tick":120,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":120},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":120}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"}]},
+          {"tick":275,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":275},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":275}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"}]}
+        ]
+      },
+      {
+        "id": "interruption",
+        "label": "Collector interruption and overlap",
+        "events": [
+          {
+            "kind": "evidence",
+            "id": "desk-ready",
+            "tick": 5,
+            "station": "research-desk",
+            "feed": "x1-sol-1h-breakout",
+            "health": "healthy",
+            "freshness": "current"
+          },
+          {
+            "kind": "evidence",
+            "id": "collector-ready",
+            "tick": 5,
+            "station": "collector-terminal",
+            "feed": "sol-1h",
+            "health": "healthy",
+            "freshness": "current"
+          },
+          {
+            "kind": "alert",
+            "id": "a-alert",
+            "tick": 30,
+            "feed": "sol-1h"
+          },
+          {
+            "kind": "alert",
+            "id": "b-repeat",
+            "tick": 30,
+            "feed": "sol-1h"
+          },
+          {
+            "kind": "alert",
+            "id": "c-unrelated",
+            "tick": 30,
+            "feed": "x1-sol-1h-breakout"
+          },
+          {
+            "kind": "alert",
+            "id": "d-repeat",
+            "tick": 51,
+            "feed": "sol-1h"
+          }
+        ],
+        "checkpoints": [
+          {"tick":29,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":29},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":29}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"}]},
+          {"tick":30,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"outbound","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":30}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"a-alert","result":"Response started"},{"id":"b-repeat","result":"Merged with active response"},{"id":"c-unrelated","result":"Ignored while busy"}]},
+          {"tick":50,"actors":[{"position":[-3.4,0,0.2533333333333334],"heading":3.141592653589793,"id":"researcher","activity":"outbound","clipTick":20},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":50}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"a-alert","result":"Response started"},{"id":"b-repeat","result":"Merged with active response"},{"id":"c-unrelated","result":"Ignored while busy"}]},
+          {"tick":51,"actors":[{"position":[-3.4,0,0.06666666666666676],"heading":3.141592653589793,"id":"researcher","activity":"outbound","clipTick":21},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":51}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"a-alert","result":"Response started"},{"id":"b-repeat","result":"Merged with active response"},{"id":"c-unrelated","result":"Ignored while busy"},{"id":"d-repeat","result":"Merged with active response"}]},
+          {"tick":98,"actors":[{"position":[2.8,0,-1.8],"heading":3.141592653589793,"id":"researcher","activity":"inspect","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":98}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"a-alert","result":"Response started"},{"id":"b-repeat","result":"Merged with active response"},{"id":"c-unrelated","result":"Ignored while busy"},{"id":"d-repeat","result":"Merged with active response"}]},
+          {"tick":123,"actors":[{"position":[2.8,0,-1.8],"heading":3.141592653589793,"id":"researcher","activity":"return","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":123}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"a-alert","result":"Response started"},{"id":"b-repeat","result":"Merged with active response"},{"id":"c-unrelated","result":"Ignored while busy"},{"id":"d-repeat","result":"Merged with active response"}]},
+          {"tick":191,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":191}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"a-alert","result":"Response started"},{"id":"b-repeat","result":"Merged with active response"},{"id":"c-unrelated","result":"Ignored while busy"},{"id":"d-repeat","result":"Merged with active response"}]}
+        ]
+      },
+      {
+        "id": "recovery",
+        "label": "Evidence recovery",
+        "events": [
+          {
+            "kind": "evidence",
+            "id": "desk-ready",
+            "tick": 5,
+            "station": "research-desk",
+            "feed": "x1-sol-1h-breakout",
+            "health": "healthy",
+            "freshness": "current"
+          },
+          {
+            "kind": "evidence",
+            "id": "collector-ready",
+            "tick": 5,
+            "station": "collector-terminal",
+            "feed": "sol-1h",
+            "health": "healthy",
+            "freshness": "current"
+          },
+          {
+            "kind": "evidence",
+            "id": "failed-refresh",
+            "tick": 15,
+            "station": "collector-terminal",
+            "feed": "sol-1h",
+            "health": "unknown",
+            "freshness": "stale"
+          },
+          {
+            "kind": "evidence",
+            "id": "collector-offline",
+            "tick": 25,
+            "station": "collector-terminal",
+            "feed": "sol-1h",
+            "health": "offline",
+            "freshness": "current"
+          },
+          {
+            "kind": "alert",
+            "id": "first-alert",
+            "tick": 30,
+            "feed": "sol-1h"
+          },
+          {
+            "kind": "evidence",
+            "id": "fresh-report",
+            "tick": 151,
+            "station": "collector-terminal",
+            "feed": "sol-1h",
+            "health": "healthy",
+            "freshness": "current"
+          },
+          {
+            "kind": "alert",
+            "id": "fresh-alert",
+            "tick": 205,
+            "feed": "sol-1h"
+          }
+        ],
+        "checkpoints": [
+          {"tick":0,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":0}],"evidence":[{"station":"research-desk","health":"unknown","freshness":"loading"},{"station":"collector-terminal","health":"unknown","freshness":"loading"}],"trace":[]},
+          {"tick":15,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":15},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":15}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"stale"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"}]},
+          {"tick":25,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":25},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":25}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"offline","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"}]},
+          {"tick":30,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"outbound","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":30}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"offline","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"}]},
+          {"tick":98,"actors":[{"position":[2.8,0,-1.8],"heading":3.141592653589793,"id":"researcher","activity":"inspect","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":98}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"offline","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"}]},
+          {"tick":123,"actors":[{"position":[2.8,0,-1.8],"heading":3.141592653589793,"id":"researcher","activity":"return","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":123}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"offline","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"}]},
+          {"tick":151,"actors":[{"position":[-2.16,0,-1.8],"heading":-1.5707963267948966,"id":"researcher","activity":"return","clipTick":28},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":151}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"},{"id":"fresh-report","result":"Evidence updated"}]},
+          {"tick":190,"actors":[{"position":[-2,0,1],"heading":2.617993877991494,"id":"researcher","activity":"return","clipTick":67},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":190}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"},{"id":"fresh-report","result":"Evidence updated"}]},
+          {"tick":191,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":191}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"},{"id":"fresh-report","result":"Evidence updated"}]},
+          {"tick":204,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"quiet","clipTick":13},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":204}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"},{"id":"fresh-report","result":"Evidence updated"}]},
+          {"tick":205,"actors":[{"position":[-2,0,1],"heading":3.141592653589793,"id":"researcher","activity":"outbound","clipTick":0},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":205}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"},{"id":"fresh-report","result":"Evidence updated"},{"id":"fresh-alert","result":"Response started"}]},
+          {"tick":275,"actors":[{"position":[2.8,0,-1.8],"heading":3.141592653589793,"id":"researcher","activity":"inspect","clipTick":2},{"position":[0.8,0,1],"heading":3.141592653589793,"id":"observer","activity":"quiet","clipTick":275}],"evidence":[{"station":"research-desk","health":"healthy","freshness":"current"},{"station":"collector-terminal","health":"healthy","freshness":"current"}],"trace":[{"id":"collector-ready","result":"Evidence updated"},{"id":"desk-ready","result":"Evidence updated"},{"id":"failed-refresh","result":"Evidence updated"},{"id":"collector-offline","result":"Evidence updated"},{"id":"first-alert","result":"Response started"},{"id":"fresh-report","result":"Evidence updated"},{"id":"fresh-alert","result":"Response started"}]}
+        ]
+      }
+    ]
+  },
+  "links": []
+}
