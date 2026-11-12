@@ -1,11 +1,13 @@
-import React, { useEffect, useLayoutEffect, useState, type FormEvent } from 'react'
+import React, { useEffect, useLayoutEffect, useState, useCallback, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { Dialog, Select, Slider, Tabs, Toolbar, Tooltip } from 'radix-ui'
+import { Dialog, Slider, Tabs, Toolbar, Tooltip } from 'radix-ui'
 import { evaluate, ticksPerSecond, type Manifest } from './model'
 import { lazy, Suspense, useRef } from 'react'
 import { defaultView, type View, type Pick } from './view'
 const Viewport = lazy(() => import('./Viewport'))
+import { StudioSelect } from './StudioSelect'
+import { Disclosure, TransportButton } from './StudioControls'
 import './style.css'
 
 type Summary = { digest: string; parent: string | null; title: string }
@@ -23,35 +25,41 @@ async function api<T>(url: string, body?: unknown): Promise<T> {
 const time = (tick: number) => (tick / ticksPerSecond).toFixed(1) + ' s'
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 
-function Choice({ value, label, items, change }: {
-  value: string; label: string; items: { id: string; label: string }[]; change: (value: string) => void
-}) {
-  return <Select.Root value={value} onValueChange={change}>
-    <Select.Trigger className="choice" aria-label={label}><Select.Value/><Select.Icon aria-hidden>⌄</Select.Icon></Select.Trigger>
-    <Select.Portal><Select.Content className="choices" position="popper"><Select.Viewport>
-      {items.map(item => <Select.Item className="option" key={item.id} value={item.id}><Select.ItemText>{item.label}</Select.ItemText></Select.Item>)}
-    </Select.Viewport></Select.Content></Select.Portal>
-  </Select.Root>
-}
-
 function Shell() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const [revisions, setRevisions] = useState<Summary[]>([])
+  const activeRevision = location.pathname.split('/')[2] ?? ''
   const [owner, setOwner] = useState(false)
   const [open, setOpen] = useState(false)
   const [error, setError] = useState('')
-  useEffect(() => { api<{ owner: boolean }>('library').then(data => setOwner(data.owner)).catch(() => {}) }, [location.pathname])
+  const latestLibraryRequest = useRef(0)
+  const refreshLibrary = useCallback(() => {
+    const request = ++latestLibraryRequest.current
+    void api<{ owner: boolean; revisions: Summary[] }>('library').then(data => {
+      if (request !== latestLibraryRequest.current) return
+      setOwner(data.owner)
+      setRevisions(data.revisions)
+    }).catch(() => {})
+  }, [])
+  useEffect(refreshLibrary, [location.pathname, refreshLibrary])
+  const refreshOnOpen = (isOpen: boolean) => { if (isOpen) refreshLibrary() }
   async function enroll(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
     try {
       await api('enroll', { code: new FormData(event.currentTarget).get('code') })
+      latestLibraryRequest.current += 1
       setOwner(true)
       setOpen(false)
     } catch (err) { setError(message(err)) }
   }
   return <Tooltip.Provider>
-    <header className="shell"><Link className="brand" to="/"><span className="brand-mark" aria-hidden/>Scene Rehearsal</Link>
-      <nav aria-label="Primary"><Link to="/">Library</Link></nav>
+    <header className="shell"><Link className="brand" to="/"><span className="brand-mark" aria-hidden/><span>Scene Rehearsal<span className="brand-period">.</span></span></Link>
+      <span className="shell-divider" aria-hidden="true"/>
+      <nav aria-label="Primary"><StudioSelect label="Open revision" variant="project" value={activeRevision} onOpenChange={refreshOnOpen}
+        options={[{ value: '', label: 'Rehearsal library' }, ...revisions.map(rev => ({ value: rev.digest, label: rev.title, description: rev.digest.slice(0, 10) }))]}
+        onChange={id => navigate(id ? '/revision/' + id + '/first' : '/')}/></nav>
       {owner ? <span className="session">Owner session</span> : <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger asChild><button>Unlock review</button></Dialog.Trigger>
         <Dialog.Portal><Dialog.Overlay className="overlay"/><Dialog.Content className="dialog">
@@ -63,7 +71,7 @@ function Shell() {
       </Dialog.Root>}
     </header>
     <main key={location.pathname.split('/').slice(0, 3).join('/')} className="page">
-      <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario" element={<Workbench owner={owner}/>}/>
+      <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario" element={<Workbench owner={owner} revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>
         <Route path="*" element={<section className="library"><h1>Page not found</h1><Link to="/">Return to library</Link></section>}/></Routes>
     </main>
     <footer>Scene Rehearsal <span>Local review workspace</span></footer>
@@ -84,7 +92,9 @@ function Library() {
   </section>
 }
 
-function Workbench({ owner }: { owner: boolean }) {
+function Workbench({ owner, revisions, onPickerOpen }: {
+  owner: boolean; revisions: Summary[]; onPickerOpen: (open: boolean) => void
+}) {
   const { digest = '', scenario: routeScenario = '' } = useParams()
   const { search } = useLocation()
   const navigate = useNavigate()
@@ -101,7 +111,6 @@ function Workbench({ owner }: { owner: boolean }) {
   const [draftPin, setDraftPin] = useState<(View & Partial<Pick> & { scenario: string; tick: number })>()
   const [tab, setTab] = useState('events')
   const [old, setOld] = useState<Revision>()
-  const [revisionChoices, setRevisionChoices] = useState<Summary[]>([])
   const [restore, setRestore] = useState<Note>()
   const [approval, setApproval] = useState<'blockout' | 'final' | null>(null)
   const [exportDigest, setExportDigest] = useState('')
@@ -115,7 +124,6 @@ function Workbench({ owner }: { owner: boolean }) {
   useEffect(() => {
     let live = true
     api<Revision>('revision/' + digest).then(data => { if (live) setRev(data) }).catch(err => { if (live) setLoadError(message(err)) })
-    api<{ revisions: Summary[] }>('library').then(data => { if (live) setRevisionChoices(data.revisions) }).catch(() => {})
     return () => { live = false }
   }, [digest])
   useEffect(() => {
@@ -218,9 +226,9 @@ function Workbench({ owner }: { owner: boolean }) {
   return <section className="workbench">
     <div className="workbench-header"><div><h1>{scene.title}</h1>
       <p className="revision">Revision <code>{digest.slice(0, 10)}</code> <span>·</span> {rev.approvals.some(a => a.kind === 'final') ? scene.room ? 'Approved for implementation' : 'Legacy approval · republish to export' : rev.approvals.length ? 'Blockout approved' : mapped ? 'Asset review' : 'Blockout'}</p></div>
-      <div className="actions"><Choice label="Scenario" value={scenario.id} items={scene.scenarios} change={changeScenario}/>
-        <Choice label="Compare revision" value={old?.digest ?? 'none'} items={[{ id: 'none', label: 'Compare revision' }, ...revisionChoices.filter(r => r.digest !== digest).map(r => ({ id: r.digest, label: r.digest.slice(0, 10) }))]} change={id => {
-          if (id === 'none') setOld(undefined)
+      <div className="actions"><StudioSelect label="Scenario" value={scenario.id} options={scene.scenarios.map(item => ({ value: item.id, label: item.label }))} onChange={changeScenario}/>
+        <StudioSelect label="Compare revision" onOpenChange={onPickerOpen} value={old?.digest ?? ''} options={[{ value: '', label: 'Compare revision', description: 'Focus on one revision' }, ...revisions.filter(r => r.digest !== digest).map(r => ({ value: r.digest, label: r.digest.slice(0, 10), description: r.title }))]} onChange={id => {
+          if (!id) setOld(undefined)
           else void act(async () => setOld(await api<Revision>('revision/' + id)))
         }}/></div>
     </div>
@@ -232,10 +240,10 @@ function Workbench({ owner }: { owner: boolean }) {
         </div>
         </Suspense><div className="timeline">
           <Toolbar.Root aria-label="Playback controls" className="transport">
-            <Toolbar.Button onClick={() => setTime(0)}>Reset</Toolbar.Button>
-            <Toolbar.Button onClick={() => { if (tick === scene.duration) setTick(0); setPlaying(!playing) }} className="primary">{playing ? 'Pause' : 'Play'}</Toolbar.Button>
-            <Toolbar.Button onClick={() => setTime(tick + 1)}>Step</Toolbar.Button>
-            <Choice value={speed} label="Playback speed" items={['0.5', '1', '2'].map(id => ({ id, label: id + '×' }))} change={setSpeed}/>
+            <TransportButton label="Reset" icon="reset" onClick={() => setTime(0)}/>
+            <TransportButton label={playing ? 'Pause' : 'Play'} icon={playing ? 'pause' : 'play'} primary onClick={() => { if (tick === scene.duration) setTick(0); setPlaying(!playing) }}/>
+            <TransportButton label="Step" icon="step" onClick={() => setTime(tick + 1)}/>
+            <StudioSelect value={speed} label="Playback speed" options={['0.5', '1', '2'].map(value => ({ value, label: value + '×' }))} onChange={setSpeed}/>
             <output>{time(tick)} / {time(scene.duration)}</output>
           </Toolbar.Root>
           <Slider.Root className="slider" value={[tick]} max={scene.duration} step={1} onValueChange={([value]) => setTime(value)}>
@@ -257,7 +265,7 @@ function Workbench({ owner }: { owner: boolean }) {
           </Tabs.Content>
           <Tabs.Content value="notes" className="pane"><h2>Review feedback</h2>
             {owner && <form onSubmit={saveNote} onFocus={() => { if (!draftPin) capturePin() }}>
-              <p className="muted">Pin at {time(noteContext.tick)}{noteContext.object ? ' on ' + scene.objects.find(o => o.id === noteContext.object)?.label : ''}</p>
+              <p className="pin-summary">Pin at {time(noteContext.tick)}{noteContext.object ? ' on ' + scene.objects.find(o => o.id === noteContext.object)?.label : ''}</p>
               <label>Adjustment<textarea name="note" required maxLength={2000} rows={3}/></label>
               <label>End time in seconds (optional)<input type="number" name="end" min={noteContext.tick / ticksPerSecond} max={scene.duration / ticksPerSecond} step=".1"/></label>
               <button className="primary">Save feedback</button>
@@ -275,7 +283,7 @@ function Workbench({ owner }: { owner: boolean }) {
           {missing.length > 0 && <p className="muted">Required asset missing for {missing.map(o => o.label).join(', ')}.</p>}
           {!scene.room && <p className="muted">Publish a new revision to include the room in final approval.</p>}
           {scene.room && !missing.length && !finalReady && <p className="muted">Final approval requires a rendered scene with all mapped models and clips.</p>}
-          {owner && <><details><summary>Import Mesh Foundry model</summary><form onSubmit={event => {
+          {owner && <><Disclosure title="Import Mesh Foundry model"><form onSubmit={event => {
             event.preventDefault()
             const fields = new FormData(event.currentTarget)
             void act(async () => {
@@ -284,7 +292,7 @@ function Workbench({ owner }: { owner: boolean }) {
               const result = await api<{ hash: string; clips: string[] }>('assets/import', { asset: fields.get('asset'), bundle: JSON.parse(await file.text()) })
               setStatus('Imported ' + result.hash + '. Clips: ' + result.clips.join(', ') + '. Publish a revision mapping the model through the CLI.')
             })
-          }}><label>Project bundle<input type="file" name="bundle" accept=".json" required/></label><label>Asset ID<input name="asset" required/></label><button>Import model</button></form></details>
+          }}><label>Project bundle<input type="file" name="bundle" accept=".json" required/></label><label>Asset ID<input name="asset" required/></label><button>Import model</button></form></Disclosure>
           <div className="actions"><button onClick={event => requestApproval(event, 'blockout')}>Approve blockout</button><button disabled={!finalReady} onClick={event => requestApproval(event, 'final')}>Approve final</button></div>
           {scene.room && rev.approvals.some(a => a.kind === 'final') && <button className="primary" onClick={() => void act(async () => {
             const result = await api<{ digest: string; package: unknown }>('revision/' + digest + '/export', {})

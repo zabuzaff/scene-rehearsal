@@ -1,0 +1,22 @@
+:root {
+  --ground: #101215;
+  --surface: #15181c;
+  --surface-raised: #1b1f26;
+  --surface-hover: #282e38;
+  --card: #20242b;
+  --text: #edf0f3;
+  --muted: #a2a9b4;
+  --soft: #c8ced8;
+  --accent: #abbcff;
+  --accent-hover: #c0ccff;
+  --on-accent: #101215;
+  --line: #343a45;
+  --edge: #929baa;
+  --scrollbar: #505a6b;
+  --danger-surface: #35262d;
+  --danger-text: #f3cad3;
+  --card-radius: 10px;
+  --font-ui: "DM Sans Variable", sans-serif;
+  --font-display: "Syne Variable", sans-serif;
+  color-scheme: dark;
+}

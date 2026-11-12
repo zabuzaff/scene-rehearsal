@@ -56,7 +56,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     catch { setError('3D rendering is unavailable. Use the object list and event timeline to inspect this rehearsal.'); return }
     setError('')
     const scene = new T.Scene()
-    scene.background = new T.Color(0xe6e5dc)
+    scene.background = new T.Color(0x101215)
     scene.add(new T.HemisphereLight(0xffffff, 0x746d60, 2.5))
     const light = new T.DirectionalLight(0xffeed7, 2)
     light.position.set(3, 9, 5)
@@ -76,7 +76,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     const report = () => current.current.onView?.({ camera: camera.position.toArray(), target: controls.target.toArray() })
     controls.addEventListener('end', report)
     for (const part of manifest.room ?? defaultRoom) box(scene, part.size, part.position, part.color)
-    const grid = new T.GridHelper(8, 16, 0x8d9b8f, 0x9fa998)
+    const grid = new T.GridHelper(8, 16, 0x78817e, 0x8e9990)
     grid.position.y = -.03
     scene.add(grid)
     const groups = new Map<string, T.Group>()
@@ -121,7 +121,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     const path = new T.Line(new T.BufferGeometry().setFromPoints(manifest.route.map(([x, y, z]) => new T.Vector3(x, y + .025, z))),
       new T.LineBasicMaterial({ color: 0x4a7789 }))
     scene.add(path)
-    const marker = new T.Mesh(new T.SphereGeometry(.11, 12, 8), new T.MeshBasicMaterial({ color: 0x23629c }))
+    const marker = new T.Mesh(new T.SphereGeometry(.11, 12, 8), new T.MeshBasicMaterial({ color: 0xabbcff }))
     scene.add(marker)
     const resize = new ResizeObserver(() => {
       camera.aspect = element.clientWidth / Math.max(1, element.clientHeight)
