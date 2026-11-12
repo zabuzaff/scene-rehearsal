@@ -12,12 +12,15 @@ import './style.css'
 
 type Summary = { digest: string; parent: string | null; title: string }
 type Note = View & { id: number; revision: string; scenario: string; tick: number; end?: number; text: string; resolved: boolean } & Partial<Pick>
-type Revision = Summary & { scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; owner: boolean; notes: Note[]; approvals: { kind: string; at: string }[] }
+type Revision = Summary & { scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; notes: Note[]; approvals: { kind: string; at: string }[] }
 
 async function api<T>(url: string, body?: unknown): Promise<T> {
-  const response = await fetch('/api/' + url, body === undefined ? undefined : {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  })
+  const session = body === undefined ? undefined : await api<{ token: string }>('session')
+  const response = await fetch('/api/' + url, session ? {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.token },
+    body: JSON.stringify(body),
+  } : undefined)
   const data = await response.json()
   if (!response.ok) throw Error(data.error)
   return data
@@ -31,51 +34,27 @@ function Shell() {
   const navigate = useNavigate()
   const [revisions, setRevisions] = useState<Summary[]>([])
   const activeRevision = location.pathname.split('/')[2] ?? ''
-  const [owner, setOwner] = useState(false)
-  const [open, setOpen] = useState(false)
-  const [error, setError] = useState('')
   const latestLibraryRequest = useRef(0)
   const refreshLibrary = useCallback(() => {
     const request = ++latestLibraryRequest.current
-    void api<{ owner: boolean; revisions: Summary[] }>('library').then(data => {
+    void api<{ revisions: Summary[] }>('library').then(data => {
       if (request !== latestLibraryRequest.current) return
-      setOwner(data.owner)
       setRevisions(data.revisions)
     }).catch(() => {})
   }, [])
   useEffect(refreshLibrary, [location.pathname, refreshLibrary])
   const refreshOnOpen = (isOpen: boolean) => { if (isOpen) refreshLibrary() }
-  async function enroll(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError('')
-    try {
-      await api('enroll', { code: new FormData(event.currentTarget).get('code') })
-      latestLibraryRequest.current += 1
-      setOwner(true)
-      setOpen(false)
-    } catch (err) { setError(message(err)) }
-  }
   return <Tooltip.Provider>
-    <header className="shell"><Link viewTransition className="brand" to="/"><span className="brand-mark" aria-hidden/><span>Scene Rehearsal<span className="brand-period">.</span></span></Link>
+    <header className="shell"><Link viewTransition className="brand" to="/"><img className="brand-mark" src="/favicon.svg" alt=""/><span>Scene Rehearsal<span className="brand-period">.</span></span></Link>
       <span className="shell-divider" aria-hidden="true"/>
       <nav aria-label="Primary"><StudioSelect label="Open revision" variant="project" value={activeRevision} onOpenChange={refreshOnOpen}
         options={[{ value: '', label: 'Rehearsal library' }, ...revisions.map(rev => ({ value: rev.digest, label: rev.title, description: rev.digest.slice(0, 10) }))]}
         onChange={id => navigate(id ? '/revision/' + id + '/first' : '/', { viewTransition: true })}/></nav>
-      {owner ? <span className="session">Owner session</span> : <Dialog.Root open={open} onOpenChange={setOpen}>
-        <Dialog.Trigger asChild><button>Unlock review</button></Dialog.Trigger>
-        <Dialog.Portal><Dialog.Overlay className="overlay"/><Dialog.Content className="dialog">
-          <Dialog.Title>Unlock owner review</Dialog.Title>
-          <Dialog.Description>Press Enter in the terminal running Scene Rehearsal. Enter the one-time code shown there.</Dialog.Description>
-          <form onSubmit={enroll}><label>Owner code<input name="code" inputMode="numeric" pattern="[0-9]{8}" required autoComplete="one-time-code"/></label>
-            {error && <p role="alert">{error}</p>}<div className="actions"><Dialog.Close asChild><button type="button">Cancel</button></Dialog.Close><button className="primary">Unlock</button></div></form>
-        </Dialog.Content></Dialog.Portal>
-      </Dialog.Root>}
     </header>
     <main key={location.pathname.split('/').slice(0, 3).join('/')} className="page">
-      <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario" element={<Workbench owner={owner} revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>
+      <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario" element={<Workbench revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>
         <Route path="*" element={<section className="library"><h1>Page not found</h1><Link viewTransition to="/">Return to library</Link></section>}/></Routes>
     </main>
-    <footer>Scene Rehearsal <span>Local review workspace</span></footer>
   </Tooltip.Provider>
 }
 
@@ -83,18 +62,18 @@ function Library() {
   const [data, setData] = useState<{ head: string; revisions: Summary[] }>()
   const [error, setError] = useState('')
   useEffect(() => { api<typeof data>('library').then(setData).catch(err => setError(message(err))) }, [])
-  return <section className="library"><h1>Rehearsal library</h1>
+  return <section className="library library-home"><header className="library-heading"><div className="library-mark"><img src="/favicon.svg" width="56" height="56" alt=""/></div><h1>Rehearsal library</h1><p>Open a revision to play through the scene, leave feedback, and review the handoff.</p></header>
     {error && <p role="alert">{error}</p>}
     {!data && !error && <p role="status">Loading rehearsals…</p>}
     {data && !data.revisions.length && <p>Publish a revision with the author CLI to open it here.</p>}
     {data && <ul className="revision-list">{data.revisions.map(rev => <li key={rev.digest}>
-      <Link viewTransition to={'/revision/' + rev.digest + '/first'}><strong>{rev.title}</strong><span>{rev.digest.slice(0, 10)}{rev.digest === data.head ? ' · Current revision' : ''}</span><span aria-hidden>→</span></Link>
+      <Link viewTransition to={'/revision/' + rev.digest + '/first'}><div><h2>{rev.title}</h2><span>{rev.digest.slice(0, 10)}{rev.digest === data.head ? ' · Current revision' : ''}</span></div><span className="revision-arrow" aria-hidden>→</span></Link>
     </li>)}</ul>}
   </section>
 }
 
-function Workbench({ owner, revisions, onPickerOpen }: {
-  owner: boolean; revisions: Summary[]; onPickerOpen: (open: boolean) => void
+function Workbench({ revisions, onPickerOpen }: {
+  revisions: Summary[]; onPickerOpen: (open: boolean) => void
 }) {
   const { digest = '', scenario: routeScenario = '' } = useParams()
   const { search } = useLocation()
@@ -113,12 +92,13 @@ function Workbench({ owner, revisions, onPickerOpen }: {
   const [tab, setTab] = useState('events')
   const [old, setOld] = useState<Revision>()
   const [restore, setRestore] = useState<Note>()
-  const [approval, setApproval] = useState<'blockout' | 'final' | null>(null)
+  const [approval, setApproval] = useState(false)
+  const [accepting, setAccepting] = useState(false)
   const [exportDigest, setExportDigest] = useState('')
   const approvalTrigger = useRef<HTMLButtonElement>(null)
-  function requestApproval(event: React.MouseEvent<HTMLButtonElement>, kind: 'blockout' | 'final') {
+  function requestBlockoutApproval(event: React.MouseEvent<HTMLButtonElement>) {
     approvalTrigger.current = event.currentTarget
-    setApproval(kind)
+    setApproval(true)
   }
   const refresh = async () => setRev(await api<Revision>('revision/' + digest))
 
@@ -224,6 +204,16 @@ function Workbench({ owner, revisions, onPickerOpen }: {
   const mapped = scene.objects.filter(object => object.asset).length
   const missing = scene.objects.filter(missingAsset)
   const finalReady = Boolean(scene.room && !missing.length && readyScene === scene)
+  const accepted = rev.approvals.some(item => item.kind === 'final')
+  const acceptRevision = () => {
+    if (!finalReady || accepting || accepted) return
+    setAccepting(true)
+    void act(async () => {
+      await api('revision/' + digest + '/approve', { kind: 'final' })
+      await refresh()
+      setStatus('Revision accepted.')
+    }).finally(() => setAccepting(false))
+  }
   return <section className="workbench">
     <div className="workbench-header"><div><h1>{scene.title}</h1>
       <p className="revision">Revision <code>{digest.slice(0, 10)}</code> <span>·</span> {rev.approvals.some(a => a.kind === 'final') ? scene.room ? 'Approved for implementation' : 'Legacy approval · republish to export' : rev.approvals.length ? 'Blockout approved' : mapped ? 'Asset review' : 'Blockout'}</p></div>
@@ -254,6 +244,7 @@ function Workbench({ owner, revisions, onPickerOpen }: {
         </div>
       </div>
       <aside className="inspector" aria-label="Scene inspector">
+        <header className="inspector-heading"><h2>Scene inspector</h2></header>
         <Tabs.Root value={tab} onValueChange={selectTab}>
           <Tabs.List className="tabs" aria-label="Inspect"><Tabs.Trigger value="events">Events</Tabs.Trigger><Tabs.Trigger value="objects">Objects</Tabs.Trigger><Tabs.Trigger value="notes">Feedback</Tabs.Trigger></Tabs.List>
           <Tabs.Content value="events" className="pane"><h2>{scenario.label}</h2><p className="activity">{state.activity}</p>
@@ -288,18 +279,18 @@ function Workbench({ owner, revisions, onPickerOpen }: {
             {pick && <><p>{pick.object ? scene.objects.find(o => o.id === pick.object)?.label : 'Floor position'} · {pick.point.map(value => value.toFixed(2)).join(', ')}</p><button onClick={() => { capturePin(); setTab('notes') }}>Pin feedback</button></>}
           </Tabs.Content>
           <Tabs.Content value="notes" className="pane"><h2>Review feedback</h2>
-            {owner && <form onSubmit={saveNote} onFocus={() => { if (!draftPin) capturePin() }}>
+            <form onSubmit={saveNote} onFocus={() => { if (!draftPin) capturePin() }}>
               <p className="pin-summary">Pin at {time(noteContext.tick)}{noteContext.object ? ' on ' + scene.objects.find(o => o.id === noteContext.object)?.label : ''}</p>
               <label>Adjustment<textarea name="note" required maxLength={2000} rows={3}/></label>
               <label>End time in seconds (optional)<input type="number" name="end" min={noteContext.tick / ticksPerSecond} max={scene.duration / ticksPerSecond} step=".1"/></label>
               <button className="primary">Save feedback</button>
-            </form>}
+            </form>
             <ul className="notes">{rev.notes.map(note => <li key={note.id}>
               <button onClick={() => openNote(note)}>{time(note.tick)}{note.end !== undefined ? '–' + time(note.end) : ''} · {note.resolved ? 'Resolved' : 'Open'}</button>
-              <p>{note.text}</p>{owner && <button onClick={() => void act(async () => {
+              <p>{note.text}</p><button onClick={() => void act(async () => {
                 await api('note/' + note.id + '/decision', { resolved: !note.resolved })
                 await refresh()
-              })}>{note.resolved ? 'Reopen' : 'Resolve'}</button>}
+              })}>{note.resolved ? 'Reopen' : 'Resolve'}</button>
             </li>)}</ul>
           </Tabs.Content>
         </Tabs.Root>
@@ -307,7 +298,7 @@ function Workbench({ owner, revisions, onPickerOpen }: {
           {missing.length > 0 && <p className="muted">Required model or clip missing for {missing.map(o => o.label).join(', ')}.</p>}
           {!scene.room && <p className="muted">Publish a new revision to include the room in final approval.</p>}
           {scene.room && !missing.length && !finalReady && <p className="muted">Final approval requires a rendered scene with all mapped models and clips.</p>}
-          {owner && <><Disclosure title="Import Mesh Foundry model"><form onSubmit={event => {
+          <Disclosure title="Import Mesh Foundry model"><form onSubmit={event => {
             event.preventDefault()
             const fields = new FormData(event.currentTarget)
             void act(async () => {
@@ -325,8 +316,8 @@ function Workbench({ owner, revisions, onPickerOpen }: {
               <label>Accepted model revision ID<input name="revision" required/></label>
               <label>GLB SHA-256<input name="hash" pattern="[0-9a-f]{64}" required/></label>
             </>}<button>Import model</button></form></Disclosure>
-          <div className="actions"><button onClick={event => requestApproval(event, 'blockout')}>Approve blockout</button><button disabled={!finalReady} onClick={event => requestApproval(event, 'final')}>Approve final</button></div>
-          {scene.room && rev.approvals.some(a => a.kind === 'final') && <button className="primary" onClick={() => void act(async () => {
+          <div className="actions"><button onClick={requestBlockoutApproval}>Approve blockout</button><button className="primary" disabled={!finalReady || accepting || accepted} onClick={acceptRevision}>{accepted ? 'Revision accepted' : accepting ? 'Accepting…' : 'Accept revision'}</button></div>
+          {scene.room && accepted && <button className="primary" onClick={() => void act(async () => {
             const result = await api<{ digest: string; package: unknown }>('revision/' + digest + '/export', {})
             const url = URL.createObjectURL(new Blob([JSON.stringify(result.package)], { type: 'application/json' }))
             const link = document.createElement('a')
@@ -335,21 +326,20 @@ function Workbench({ owner, revisions, onPickerOpen }: {
             link.click()
             setTimeout(() => URL.revokeObjectURL(url), 1000)
             setExportDigest(result.digest)
-          })}>Export approved package</button>}</>}
+          })}>Export approved package</button>}
           {exportDigest && <label>Confirm this digest separately with the consumer<input readOnly value={exportDigest}/></label>}
         </section>
         {status && <p className="notice" role="status">{status}</p>}
         {error && <p className="notice error" role="alert">{error}</p>}
       </aside>
     </div>
-    <Dialog.Root open={Boolean(approval)} onOpenChange={open => { if (!open) setApproval(null) }}>
+    <Dialog.Root open={Boolean(approval)} onOpenChange={open => { if (!open) setApproval(false) }}>
       <Dialog.Portal><Dialog.Overlay className="overlay"/><Dialog.Content className="dialog" onCloseAutoFocus={event => { event.preventDefault(); approvalTrigger.current?.focus() }}>
-        <Dialog.Title>{approval === 'final' ? 'Approve for implementation?' : 'Approve blockout?'}</Dialog.Title>
+        <Dialog.Title>Approve blockout?</Dialog.Title>
         <Dialog.Description>Your approval applies to revision {digest.slice(0, 10)}.</Dialog.Description>
-        <div className="actions"><Dialog.Close asChild><button>Cancel</button></Dialog.Close><button className="primary" disabled={approval === 'final' && !finalReady} onClick={() => void act(async () => {
-          const kind = approval
-          setApproval(null)
-          await api('revision/' + digest + '/approve', { kind })
+        <div className="actions"><Dialog.Close asChild><button>Cancel</button></Dialog.Close><button className="primary" onClick={() => void act(async () => {
+          setApproval(false)
+          await api('revision/' + digest + '/approve', { kind: 'blockout' })
           await refresh()
           setStatus('Approval recorded.')
         })}>Confirm approval</button></div>

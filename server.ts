@@ -2,23 +2,20 @@ import Fastify from 'fastify'
 import serveStatic from '@fastify/static'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, realpathSync } from 'node:fs'
-import { randomBytes, randomInt } from 'node:crypto'
-import { createInterface } from 'node:readline'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { assetClips, defaultRoom, fixture, missingAsset, manifestSchema, noteSchema, sha, type SceneObject } from './src/model.ts'
+import { assetClips, defaultRoom, missingAsset, manifestSchema, noteSchema, sha, type SceneObject } from './src/model.ts'
 import { canonical, hash, sourceIdentity, sourceKey, sourceSchema } from './src/handoff.ts'
-import { readAcceptedModel } from './src/mesh.ts'
+import { acceptedModel, readAcceptedModel } from './src/mesh.ts'
 
 const root = process.env.SCENE_REHEARSAL_DATA_DIR ?? join(homedir(), 'Library/Application Support/Scene Rehearsal')
 const port = Number(process.env.SCENE_REHEARSAL_PORT ?? 4331)
 if (!isAbsolute(root) || !Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Invalid local configuration.')
-const initialize = process.env.SCENE_REHEARSAL_INIT === 'empty'
-if (initialize && !process.env.SCENE_REHEARSAL_DATA_DIR) throw Error('Empty initialization requires an explicit data directory.')
 const origin = 'http://127.0.0.1:' + port
 if (process.argv.includes('--status')) {
-  console.log(JSON.stringify({ root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite'), initialize }))
+  console.log(JSON.stringify({ root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite') }))
   process.exit(0)
 }
 mkdirSync(root, { recursive: true, mode: 0o700 })
@@ -28,7 +25,6 @@ mkdirSync(blobDir, { mode: 0o700, recursive: true })
 const db = new DatabaseSync(join(root, 'review.sqlite'))
 db.exec(`
   PRAGMA journal_mode = WAL;
-  CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS revisions (digest TEXT PRIMARY KEY, parent TEXT, scene TEXT NOT NULL, links TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS head (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, revision TEXT NOT NULL);
@@ -56,25 +52,11 @@ function saveRevision(parent: string | null, scene: z.infer<typeof manifestSchem
   db.prepare('INSERT INTO head VALUES(1,?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest').run(digest)
   return digest
 }
-const emptyLibrary = transaction(() => {
-  const optedIn = Boolean(db.prepare("SELECT name FROM settings WHERE name='empty-library'").get())
-  if (initialize && !optedIn && head()) throw Error('Cannot initialize a library with revision history.')
-  if (initialize) db.prepare("INSERT OR IGNORE INTO settings VALUES('empty-library')").run()
-  if (!head() && !initialize && !optedIn) saveRevision(null, manifestSchema.parse(fixture), [])
-  return initialize || optedIn
-})
 const tokenPath = join(root, 'author.token')
 if (!existsSync(tokenPath)) writeFileSync(tokenPath, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' })
 const authorToken = readFileSync(tokenPath, 'utf8')
+const reviewToken = randomBytes(32).toString('hex')
 const app = Fastify({ bodyLimit: 1_000_000 })
-let code = ''
-let expires = 0
-let lastAttempt = 0
-const sessions = new Map<string, number>()
-const owner = (cookie = '') => {
-  const key = cookie.split(/;\s*/).find(value => value.startsWith('rehearsal_owner='))?.slice(16) ?? ''
-  return (sessions.get(key) ?? 0) > Date.now()
-}
 function requireRole(pass: boolean) {
   if (!pass) throw Object.assign(Error('This action requires the appropriate local role.'), { statusCode: 403 })
 }
@@ -126,8 +108,11 @@ app.setErrorHandler((error, _req, reply) => {
   const status = err.statusCode ?? 400
   reply.code(status).send({ error: err instanceof z.ZodError ? err.issues.map(i => i.message).join(' ') : err.message })
 })
-app.get('/api/library', async req => ({
-  owner: owner(req.headers.cookie), head: head(),
+app.get('/api/session', async (_req, reply) => {
+  return reply.header('Cache-Control', 'no-store').send({ token: reviewToken })
+})
+app.get('/api/library', async () => ({
+  head: head(),
   revisions: db.prepare('SELECT digest, parent, json_extract(scene,\'$.title\') AS title FROM revisions ORDER BY rowid DESC').all(),
 }))
 app.get('/api/revision/:digest', async req => {
@@ -140,23 +125,9 @@ app.get('/api/revision/:digest', async req => {
     const source = resolveSource(object.asset)
     return source ? [{ ...source, object: object.id }] : []
   })
-  return { ...rev, sources, owner: owner(req.headers.cookie), notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
+  return { ...rev, sources, notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
     .map(n => ({ id: n.id, revision: n.revision, resolved: Boolean(n.resolved), ...JSON.parse(String(n.data)) })),
     approvals: db.prepare('SELECT kind,at FROM approvals WHERE revision=?').all(rev.digest) }
-})
-app.post('/api/enroll', async (req, reply) => {
-  if (req.headers.origin !== origin || req.headers.authorization) throw bad('Use the owner browser form.', 403)
-  const input = z.object({ code: z.string().regex(/^\d{8}$/) }).parse(req.body)
-  const now = Date.now()
-  if (now - lastAttempt < 1000) throw bad('Wait a moment before retrying.', 429)
-  lastAttempt = now
-  if (now >= expires || input.code !== code) throw bad('Invalid or expired owner code.', 403)
-  expires = 0
-  code = ''
-  sessions.clear()
-  const key = randomBytes(32).toString('hex')
-  sessions.set(key, now + 8 * 3600_000)
-  return reply.header('Set-Cookie', 'rehearsal_owner=' + key + '; HttpOnly; SameSite=Strict; Path=/api; Max-Age=28800').send({ owner: true })
 })
 app.post('/api/publish', async req => {
   requireRole(req.headers.authorization === 'Bearer ' + authorToken)
@@ -168,7 +139,6 @@ app.post('/api/publish', async req => {
       if (previous.request_hash !== checksum) throw bad('Request ID already used.', 409)
       return { revision: previous.revision }
     }
-    if (input.parent === null && !emptyLibrary) throw bad('Root publication requires empty library initialization.', 409)
     if ((head() ?? null) !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
     for (const link of input.links) if (!db.prepare('SELECT id FROM notes WHERE id=?').get(link)) throw bad('Linked note not found.')
     const requiredSlots = input.parent ? revision(input.parent).scene.objects.filter(object => object.requiresAsset) : []
@@ -185,7 +155,7 @@ app.post('/api/publish', async req => {
   })
 })
 app.post('/api/revision/:digest/note', async req => {
-  requireRole(owner(req.headers.cookie))
+  requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const rev = getRevision(req.params)
   const note = noteSchema.parse(req.body)
   if (!rev.scene.scenarios.some(s => s.id === note.scenario) || note.tick > rev.scene.duration ||
@@ -194,7 +164,7 @@ app.post('/api/revision/:digest/note', async req => {
   return { id: Number(db.prepare('INSERT INTO notes(revision,data) VALUES(?,?)').run(rev.digest, JSON.stringify(note)).lastInsertRowid) }
 })
 app.post('/api/note/:id/decision', async req => {
-  requireRole(owner(req.headers.cookie))
+  requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params)
   const { resolved } = z.object({ resolved: z.boolean() }).parse(req.body)
   if (!db.prepare('SELECT id FROM notes WHERE id=?').get(id)) throw bad('Note not found.', 404)
@@ -202,7 +172,7 @@ app.post('/api/note/:id/decision', async req => {
   return { resolved }
 })
 app.post('/api/revision/:digest/approve', async req => {
-  requireRole(owner(req.headers.cookie))
+  requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const rev = getRevision(req.params)
   const { kind } = z.object({ kind: z.enum(['blockout', 'final']) }).parse(req.body)
   if (kind === 'final' && !rev.scene.room) throw bad('Publish a new revision to include the room before final approval.')
@@ -211,7 +181,7 @@ app.post('/api/revision/:digest/approve', async req => {
   return { kind }
 })
 app.post('/api/revision/:digest/export', async req => {
-  requireRole(owner(req.headers.cookie))
+  requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const rev = getRevision(req.params)
   if (!rev.scene.room) throw bad('Publish and approve a new revision that includes the room.')
   const approval = db.prepare("SELECT kind,at FROM approvals WHERE revision=? AND kind='final'").get(rev.digest)
@@ -232,7 +202,7 @@ app.post('/api/revision/:digest/export', async req => {
   return { digest: hash(canonical(manifest)), package: { manifest, blobs } }
 })
 app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {
-  requireRole(owner(req.headers.cookie))
+  requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const { bundle, asset, expected } = z.object({
     bundle: z.unknown(), asset: z.string().min(1), expected: sourceIdentity.optional(),
   }).parse(req.body)
@@ -241,6 +211,50 @@ app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {
     source.revision !== expected.revision || source.hash !== expected.hash)) {
     throw bad('The bundle does not match the owner-confirmed Mesh Foundry model revision.')
   }
+  return storeModel(bytes, source, Boolean(expected))
+})
+
+app.post('/api/agent/assets/import', { bodyLimit: 190_000_000 }, async req => {
+  requireRole(req.headers.authorization === 'Bearer ' + authorToken)
+  const { bundle, expected, meshFoundryDataDir } = z.strictObject({
+    bundle: z.unknown(),
+    meshFoundryDataDir: z.string().refine(isAbsolute, 'Use the absolute Mesh Foundry data directory from the copied prompt.'),
+    expected: sourceIdentity.extend({ clips: z.array(z.string().min(1)) }),
+  }).parse(req.body)
+  const foundryPort = Number(process.env.SCENE_REHEARSAL_MESH_FOUNDRY_PORT)
+  if (!Number.isInteger(foundryPort) || foundryPort < 1024 || foundryPort > 65535 || foundryPort === port) {
+    throw bad('Configure SCENE_REHEARSAL_MESH_FOUNDRY_PORT for the running trusted local Mesh Foundry library.', 503)
+  }
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(expected.project)) throw bad('Invalid Mesh Foundry project ID.')
+  const { bytes, source } = await readAcceptedModel(bundle, expected.asset)
+  if (sourceKey(source) !== sourceKey(expected) || JSON.stringify(source.clips) !== JSON.stringify(expected.clips)) {
+    throw bad('The bundle does not match the copied model identity and clips.', 409)
+  }
+  let record: unknown
+  try {
+    const foundry = 'http://127.0.0.1:' + foundryPort
+    const options = { signal: AbortSignal.timeout(5000), redirect: 'error' } as const
+    const session = await fetch(foundry + '/api/session', options)
+    if (!session.ok) throw Error('Mesh Foundry session request failed.')
+    const { dataRoot } = z.object({ dataRoot: z.string().refine(isAbsolute) }).parse(await session.json())
+    if (realpathSync(dataRoot) !== realpathSync(meshFoundryDataDir)) {
+      throw bad('The configured Mesh Foundry service is running a different library than the copied prompt.', 409)
+    }
+    const response = await fetch(foundry + '/api/projects/' + encodeURIComponent(expected.project), options)
+    if (response.status === 404) throw bad('The configured Mesh Foundry library does not contain the source project.', 409)
+    if (!response.ok) throw Error('Mesh Foundry request failed.')
+    record = await response.json()
+  } catch (error) {
+    if ((error as { statusCode?: number }).statusCode === 409) throw error
+    throw bad('Could not read the configured local Mesh Foundry acceptance record.', 503)
+  }
+  if (sourceKey(acceptedModel(record, expected.asset)) !== sourceKey(expected)) {
+    throw bad('Mesh Foundry model acceptance changed. Copy a fresh handoff prompt.', 409)
+  }
+  return storeModel(bytes, source, true)
+})
+
+function storeModel(bytes: Buffer, source: z.infer<typeof sourceSchema>, checked: boolean) {
   const key = sourceKey(source)
   const destination = join(blobDir, source.hash)
   const pending = destination + '.' + randomBytes(8).toString('hex')
@@ -248,7 +262,7 @@ app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {
   renameSync(pending, destination)
   return transaction(() => {
     const known = resolveSource({ hash: source.hash, source: key })
-    const record = sourceSchema.parse({ ...source, ownerChecked: expected || known?.ownerChecked ? true : undefined })
+    const record = sourceSchema.parse({ ...source, ownerChecked: checked || known?.ownerChecked ? true : undefined })
     const serialized = JSON.stringify(record)
     db.prepare('INSERT INTO asset_sources VALUES(?,?) ON CONFLICT(key) DO UPDATE SET source=excluded.source')
       .run(key, serialized)
@@ -259,7 +273,7 @@ app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {
     }
     return { ...record, sourceKey: key }
   })
-})
+}
 app.get('/api/assets/:digest', async (req, reply) => {
   const { digest } = params.parse(req.params)
   if (!db.prepare('SELECT hash FROM assets WHERE hash=?').get(digest)) throw bad('Asset not found.', 404)
@@ -272,14 +286,6 @@ app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWi
   ? reply.sendFile('index.html') : reply.code(404).send({ error: 'Not found.' }))
 await app.listen({ host: '127.0.0.1', port })
 console.log('Scene Rehearsal at ' + origin + '\nData: ' + root)
-if (process.stdin.isTTY) {
-  console.log('Press Enter here for a one-time owner enrollment code.')
-  createInterface({ input: process.stdin }).on('line', () => {
-    code = String(randomInt(0, 100_000_000)).padStart(8, '0')
-    expires = Date.now() + 120_000
-    console.log('Owner code (valid for two minutes): ' + code)
-  })
-}
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
   await app.close()
   db.close()
