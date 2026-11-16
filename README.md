@@ -62,3 +62,19 @@ Open http://127.0.0.1:4332 and select **Kairo · Research and collector office**
 ### Import from a Mesh Foundry handoff prompt
 
 Start Scene Rehearsal with `SCENE_REHEARSAL_MESH_FOUNDRY_PORT` set to the port of the running trusted local Mesh Foundry library. The agent uses Mesh Foundry's CLI to export a private project bundle, then runs `npm run cli -- import-model /absolute/import-request.json` with the usual rehearsal library and port settings. The request has `bundlePath` (the absolute bundle path) `meshFoundryDataDir` (the absolute source data directory from the prompt), and `expected` (the copied `project`, `asset`, `revision`, `hash` and ordered `clips` fields). The server checks the GLB and its clips, then compares the exact source identity with the configured Mesh Foundry service's live model-stage acceptance after verifying the service reports the same library. Use the returned `sourceKey` when publishing the v2 draft. This author workflow leaves final approval and export in the local browser.
+
+### Binding one piece of a GLB
+
+For a v2 static slot, use `"asset": { "hash": "<GLB SHA-256>", "source": "<imported sourceKey>", "node": "V0.9 Desk Pivot" }`.
+`node` matches the exact, case-sensitive glTF `nodes[].name` in the default scene, including spaces and punctuation. Name the piece's pivot uniquely among nodes reachable from that scene. Missing and duplicate names are rejected. Omitting `node` loads the whole default scene.
+
+The slot places the selected pivot at its authored position. Scene Rehearsal excludes ancestor transforms and compensates for the pivot's original translation. Pivot rotation and scale, descendant transforms, geometry and materials are retained. The subtree must contain geometry. Every channel of a mapped animation clip must target a node inside that subtree.
+
+Kairo Scene 1 uses one GLB from Mesh Foundry asset `kairo-research-desk-kit`, accepted revision `kairo-research-desk-kit-scene1-fit-model-1`, SHA-256 `c1faee3d87aebf977b92b8e1a1b7479a84d39a4f610f3c3898ee8a16ccfdf72d`. All four slots use the same imported source key.
+
+| Slot | Exact node name | GLB node index |
+| --- | --- | ---: |
+| `v09` | `V0.9 Desk Pivot` | 81 |
+| `x1` | `X1 Desk Pivot` | 172 |
+| `v09-chair` | `V0.9 Chair Pivot` | 14 |
+| `x1-chair` | `X1 Chair Pivot` | 96 |

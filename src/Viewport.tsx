@@ -3,7 +3,7 @@ import * as T from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { assetClips, defaultRoom, evaluate, ticksPerSecond, type Manifest } from './model'
-
+import { modelInstance } from './model-instance'
 import type { Vec, View, Pick } from './view'
 
 function box(parent: T.Object3D, size: Vec, pos: Vec, color: number) {
@@ -91,6 +91,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
         }
       }
     })
+    const detachedScenes: T.Object3D[] = []
     let active = true
     let pending = manifest.objects.filter(object => object.asset).length
     let rendered = false
@@ -103,7 +104,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
       groups.set(object.id, group)
       const asset = object.asset
       if (asset) {
-        new GLTFLoader().load('/api/assets/' + asset.hash, gltf => {
+        new GLTFLoader().load('/api/assets/' + asset.hash, async gltf => {
           if (!active) { dispose(gltf.scene); return }
           const names = assetClips(asset)
           const clips = gltf.animations.filter(clip => names.includes(clip.name))
@@ -112,11 +113,25 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
             setError('Mapped clip unavailable for ' + object.label)
             return
           }
+          let instance
+          try { instance = await modelInstance(gltf, asset.node, object.id, names) }
+          catch (error) {
+            dispose(gltf.scene)
+            if (active) setError((error as Error).message)
+            return
+          }
+          const { model, placement } = instance
+          if (!active) {
+            if (placement !== gltf.scene) dispose(placement)
+            dispose(gltf.scene)
+            return
+          }
+          if (placement !== gltf.scene) detachedScenes.push(gltf.scene)
           for (const child of [...group.children]) { group.remove(child); dispose(child) }
-          group.add(gltf.scene)
+          group.add(placement)
           pending -= 1
           if (clips.length) {
-            const mixer = new T.AnimationMixer(gltf.scene)
+            const mixer = new T.AnimationMixer(model)
             const actions = new Map(clips.map(clip => [clip.name, mixer.clipAction(clip).play()]))
             mixers.set(object.id, { mixer, actions })
           }
@@ -146,7 +161,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
       const hit = ray.intersectObjects([...groups.values()], true)[0]
       if (hit) {
         let node: T.Object3D | null = hit.object
-        while (node && !node.userData.id) node = node.parent
+        while (node && groups.get(node.userData.id) !== node) node = node.parent
         if (node) current.current.onPick?.({ object: node.userData.id, point: node.worldToLocal(hit.point).toArray() })
       } else {
         const point = ray.ray.intersectPlane(new T.Plane(new T.Vector3(0, 1, 0)), new T.Vector3())
@@ -221,6 +236,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
       controls.dispose()
       controlsRef.current = null
       for (const { mixer } of mixers.values()) mixer.stopAllAction()
+      for (const detached of detachedScenes) dispose(detached)
       dispose(scene)
       renderer.dispose()
       renderer.domElement.remove()

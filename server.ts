@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { assetClips, defaultRoom, missingAsset, manifestSchema, noteSchema, sha, type SceneObject } from './src/model.ts'
 import { canonical, hash, sourceIdentity, sourceKey, sourceSchema } from './src/handoff.ts'
 import { acceptedModel, readAcceptedModel } from './src/mesh.ts'
+import { verifyGlbNode } from './src/glb-node.ts'
 
 const root = process.env.SCENE_REHEARSAL_DATA_DIR ?? join(homedir(), 'Library/Application Support/Scene Rehearsal')
 const port = Number(process.env.SCENE_REHEARSAL_PORT ?? 4331)
@@ -89,7 +90,11 @@ function mappings(rev: ReturnType<typeof revision>, required: boolean) {
     if (!source) throw bad('Mapped asset not found.')
     if (rev.scene.version === 2 && !source.ownerChecked) throw bad('Confirm the Mesh Foundry source record for ' + object.label + '.')
     const file = readFileSync(join(blobDir, source.hash))
-    if (assetClips(object.asset).some(clip => !source.clips.includes(clip)) || hash(file) !== source.hash) throw bad('Mapped asset or clip is invalid.')
+    const clips = assetClips(object.asset)
+    if (clips.some(clip => !source.clips.includes(clip)) || hash(file) !== source.hash) throw bad('Mapped asset or clip is invalid.')
+    if (object.asset.node !== undefined) {
+      verifyGlbNode(file, object.asset.node, object.id, clips)
+    }
     const key = sourceKey(source)
     const explicit = 'source' in object.asset && object.asset.source
     result.set(key, { source, file, legacy: !explicit || result.get(key)?.legacy === true })

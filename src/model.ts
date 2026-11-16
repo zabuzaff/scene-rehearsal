@@ -30,7 +30,7 @@ const legacySchema = z.strictObject({
   objects: z.array(z.strictObject({
     id, label: z.string().min(1).max(80), position: point,
     kind: z.enum(['researcher', 'desk', 'chair', 'terminal']),
-    asset: z.strictObject({ hash: sha, clip: z.string().min(1) }).optional(),
+    asset: z.strictObject({ hash: sha, node: z.string().min(1).optional(), clip: z.string().min(1) }).optional(),
     requiresAsset: z.boolean().optional(),
   })).min(1).max(64),
   route: z.array(point).min(2).max(64),
@@ -138,7 +138,7 @@ const objectV2 = z.strictObject({
   kind: z.enum(['researcher', 'desk', 'chair', 'terminal']),
   requiresAsset: z.boolean().optional(),
   requiredActivities: z.array(activity).max(4).optional(),
-  asset: z.strictObject({ hash: sha, source: sha.optional(), clips: bindings.optional() }).optional(),
+  asset: z.strictObject({ hash: sha, node: z.string().min(1).optional(), source: sha.optional(), clips: bindings.optional() }).optional(),
 })
 const checkpoint = z.strictObject({
   tick,

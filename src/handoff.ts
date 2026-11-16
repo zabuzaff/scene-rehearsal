@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { verifyGlbNode } from './glb-node.ts'
 import { assetClips, manifestSchema, missingAsset, sha } from './model.ts'
 
 export const hash = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex')
@@ -61,10 +62,12 @@ export function verifyPackage(input: unknown, trusted: Set<string>) {
     const key = 'source' in asset ? asset.source : undefined
     const entry = key ? entries.find(entry => sourceKey(entry.source) === key) :
       entries.length === 1 ? entries[0] : entries.find(entry => entry.legacy)
+    const clips = assetClips(asset)
     if (!entry || (m.scene.version === 2 && !entry.source.ownerChecked) ||
-        assetClips(asset).some(clip => !entry.source.clips.includes(clip))) {
+        clips.some(clip => !entry.source.clips.includes(clip))) {
       throw Error('Missing mapped asset or clip.')
     }
+    if (asset.node !== undefined) verifyGlbNode(Buffer.from(pkg.blobs[entry.path], 'base64'), asset.node, object.id, clips)
   }
   return m.scene
 }
