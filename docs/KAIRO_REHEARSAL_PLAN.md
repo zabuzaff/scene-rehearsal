@@ -1,5 +1,7 @@
 # Kairo rehearsal for owner review
 
+This document describes the historical v1/v2 workflow. For new scenes use the [plan-linked placeholder draft workflow](PLAN_DRAFTS.md).
+
 ## Starting point
 
 The checkout was clean at `07fcd7f`, matching both local `origin/main` and the remote main ref. The Scene Loom CLI returned project `scene-rehearsal` at content revision 2, layout revision 0, with 14 cards and no attached assets. This plan takes the `kairo-consumer` card's one-room, two-researcher, two-station scope as the first reviewable 3D rehearsal. Kairo's existing 29-station pixel office is a reference for evidence semantics and station identity. See [Kairo's handoff](../../kairo/HANDOFF.md) and [office storyboard](../../kairo/docs/RESEARCH_OFFICE_STORYBOARD.md).

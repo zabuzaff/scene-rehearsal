@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { verifyGlbNode } from './glb-node.ts'
-import { assetClips, manifestSchema, missingAsset, sha } from './model.ts'
+import { assetClips, draftReviewSchema, manifestSchema, missingAsset, sha } from './model.ts'
 
 export const hash = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 
@@ -23,8 +23,9 @@ export function sourceKey({ project, asset, revision, hash: digest }: z.infer<ty
 }
 
 const contract = z.strictObject({
-  format: z.enum(['scene-rehearsal-1', 'scene-rehearsal-2']), revision: sha, parent: sha.nullable(),
+  format: z.enum(['scene-rehearsal-1', 'scene-rehearsal-2', 'scene-rehearsal-3']), revision: sha, parent: sha.nullable(),
   links: z.array(z.number().int().positive()), scene: manifestSchema,
+  draftReview: draftReviewSchema.optional(),
   approval: z.strictObject({ kind: z.literal('final'), at: z.string() }),
   assets: z.array(z.strictObject({ path: z.string(), source: sourceSchema, legacy: z.literal(true).optional() })),
 })
@@ -35,7 +36,8 @@ export function verifyPackage(input: unknown, trusted: Set<string>) {
   if (m.format !== 'scene-rehearsal-' + m.scene.version) throw Error('Scene format does not match package.')
   if (!trusted.has(hash(canonical(m)))) throw Error('Manifest digest is not approved by the consumer.')
   if (hash(canonical({ parent: m.parent, scene: m.scene, links: m.links })) !== m.revision) throw Error('Revision digest mismatch.')
-  if (!m.scene.room) throw Error('Approved package must include room geometry.')
+  if (m.scene.version === 3 && !m.draftReview) throw Error('Approved draft must include review evidence.')
+  if (m.scene.version !== 3 && !m.scene.room) throw Error('Approved package must include room geometry.')
   const paths = new Set<string>()
   const records = new Map<string, typeof m.assets>()
   const identities = new Set<string>()
@@ -63,7 +65,7 @@ export function verifyPackage(input: unknown, trusted: Set<string>) {
     const entry = key ? entries.find(entry => sourceKey(entry.source) === key) :
       entries.length === 1 ? entries[0] : entries.find(entry => entry.legacy)
     const clips = assetClips(asset)
-    if (!entry || (m.scene.version === 2 && !entry.source.ownerChecked) ||
+    if (!entry || (m.scene.version !== 1 && !entry.source.ownerChecked) ||
         clips.some(clip => !entry.source.clips.includes(clip))) {
       throw Error('Missing mapped asset or clip.')
     }

@@ -1,5 +1,7 @@
 # Scene Rehearsal development plan
 
+This document describes the historical v1/v2 workflow. For new scenes use the [plan-linked placeholder draft workflow](PLAN_DRAFTS.md).
+
 ## Baseline and requirements
 
 The target is the standalone Scene Rehearsal repository at `/Users/zaffran/vibed/scene-rehearsal`. It was absent before this planning run. There is no current application, dependency manifest, CI, test suite, or existing visual baseline. Kairo, Mesh Foundry and Scene Loom are separate checkouts.

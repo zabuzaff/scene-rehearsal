@@ -1,6 +1,6 @@
 # Scene Rehearsal
 
-A local studio for reviewing simulation behavior before integrating it into a consumer application. Agents publish immutable revisions. The owner inspects scenarios, pins feedback, approves a revision and exports a package.
+A local studio for reviewing scene placement, cues and intended behavior before game implementation. Agents publish immutable revisions. The owner inspects scenarios, pins feedback, approves a revision and exports a package.
 
 ## Start locally
 
@@ -28,9 +28,9 @@ npm run cli -- publish /absolute/path/to/request.json
 npm run cli -- verify /absolute/path/to/package.json OWNER_CONFIRMED_SHA256
 ```
 
-Use the read result's `scene` as the base. The publication request has `request` (unique request ID), `parent` (current head SHA-256), `scene` (updated manifest), and `links` (feedback IDs addressed). If you change behavior, update the corresponding scenario checkpoints. Retrying the same request returns the same revision. A stale parent requires rereading the head. The CLI reads its author credential from the local library.
+For a new scene, start from the exact owner-approved Loom plan and publish a v3 placeholder draft. Inspect its placement and cues, record what was checked and approve the exact draft for implementation. [Plan draft authoring and Loom writeback](docs/PLAN_DRAFTS.md) covers the request shape, clean draft targets, review evidence and handoff export.
 
-Use **Import Mesh Foundry model** with a Mesh Foundry project bundle and the accepted model's asset ID. The import returns the GLB hash and clip names. In the next draft, set the required object's `asset` to `{ "hash": "...", "clip": "..." }`. Click **Accept revision** in the local studio to approve the exact mapped revision without signing in. The owner then exports the package and confirms the displayed manifest digest separately with the consumer. Blockout approval is recorded independently. Older revisions without embedded room geometry can still be opened. Publish a child revision to include the room, then review and approve that revision for a new export.
+Optional model import remains available in the inspector. Versions 1 and 2 retain their existing playback, asset mapping and approval rules.
 
 ## Checks
 
@@ -38,7 +38,7 @@ Run `npm run typecheck`, `npm test`, and `npm run build`. Use an isolated local 
 
 [Development plan](docs/DEVELOPMENT_PLAN.md)
 
-## Kairo rehearsal draft
+## Historical Kairo fixture (v2)
 
 The [Kairo plan](docs/KAIRO_REHEARSAL_PLAN.md) and [authored draft](fixtures/kairo-office.json) cover the two-station office with synthetic quiet, interruption and recovery scenarios. To publish it locally, use an empty dedicated library. Use the same data directory and port for the CLI and later starts.
 

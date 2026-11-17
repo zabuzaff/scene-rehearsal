@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/)
+const loomId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/)
 const tick = z.number().int().min(0).max(36000)
 export const point = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()])
 export const sha = z.string().regex(/^[a-f0-9]{64}$/)
@@ -62,7 +63,7 @@ type LegacyManifest = z.infer<typeof legacySchema>
 export const ticksPerSecond = 10
 export const noteSchema = z.strictObject({
   scenario: id, tick, end: tick.optional(), text: z.string().trim().min(1).max(2000),
-  object: id.optional(), point: point.optional(), camera: point, target: point,
+  object: loomId.optional(), point: point.optional(), camera: point, target: point,
 })
 
 function evaluateLegacy(m: LegacyManifest, scenarioId: string, tick: number) {
@@ -220,7 +221,47 @@ const officeSchema = z.strictObject({
 })
 
 type OfficeManifest = z.infer<typeof officeSchema>
-export const manifestSchema = z.discriminatedUnion('version', [legacySchema, officeSchema])
+export const planIdentity = z.strictObject({
+  storyboardId: loomId, sceneId: loomId, planId: loomId,
+  planRevision: z.union([z.number().int().nonnegative(), loomId]), approvalId: loomId,
+})
+const intent = z.string().trim().min(1).max(2000)
+export const draftReviewSchema = z.strictObject({ checked: intent })
+const draftSchema = z.strictObject({
+  version: z.literal(3), title: z.string().trim().min(1).max(120),
+  unit: z.literal('meter'), up: z.literal('Y'), duration: tick.min(1),
+  plan: planIdentity,
+  intent, pendingChecks: z.array(intent).max(40),
+  objects: z.array(z.strictObject({
+    id: loomId, label: z.string().min(1).max(80), position: point,
+    kind: z.enum(['box', 'marker']),
+    size: roomSchema.element.shape.size,
+    scale: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]),
+    rotation: point,
+    pieces: z.array(loomId).min(1).max(100).optional(),
+    asset: objectV2.shape.asset.unwrap().pick({ hash: true, node: true, source: true }).optional(),
+  })).min(1).max(128),
+  scenarios: z.array(z.strictObject({
+    id, label: z.string().min(1).max(80),
+    events: z.array(z.strictObject({ id, tick, label: z.string().min(1).max(80), intent,
+      route: z.array(point).min(2).max(64).optional(),
+      camera: z.strictObject({ position: point, target: point }).optional(),
+    })).max(100),
+  })).min(1).max(16),
+}).superRefine((scene, ctx) => {
+  const unique = (ids: string[]) => new Set(ids).size === ids.length
+  const pieceIds = scene.objects.flatMap(object => object.pieces ?? [])
+  if (!unique([...scene.objects.map(o => o.id), ...pieceIds]) ||
+      !unique(scene.scenarios.map(s => s.id)) ||
+      scene.scenarios.some(s => !unique(s.events.map(e => e.id)) || s.events.some(e => e.tick > scene.duration))) {
+    ctx.addIssue({ code: 'custom', message: 'Use unique object, piece, scenario and cue IDs and keep cues within the draft duration.' })
+  }
+  if (scene.scenarios.some(s => s.events.some(e => e.camera && samePoint(e.camera.position, e.camera.target)))) {
+    ctx.addIssue({ code: 'custom', message: 'A camera cue needs distinct position and target.' })
+  }
+})
+
+export const manifestSchema = z.discriminatedUnion('version', [legacySchema, officeSchema, draftSchema])
 export type Manifest = z.infer<typeof manifestSchema>
 export type SceneObject = Manifest['objects'][number]
 
@@ -298,13 +339,20 @@ function evaluateOffice(scene: OfficeManifest, scenarioId: string, time: number)
 }
 
 export function evaluate(scene: Manifest, scenario: string, tick: number) {
+  if (scene.version === 3) {
+    const events = (scene.scenarios.find(s => s.id === scenario)?.events ?? [])
+      .filter(event => event.tick <= tick).sort((a, b) => a.tick - b.tick)
+    return { activity: events.at(-1)?.label ?? 'Placement preview',
+      position: [0, 0, 0], actors: [], evidence: [],
+      trace: events.map(event => ({ ...event, feed: event.label, result: event.intent })) }
+  }
   return scene.version === 2 ? evaluateOffice(scene, scenario, tick) : {
     ...evaluateLegacy(scene, scenario, tick), actors: [], evidence: [],
   }
 }
 
 export function assetClips(asset: NonNullable<SceneObject['asset']>) {
-  return 'clip' in asset ? [asset.clip] : Object.values(asset.clips ?? {})
+  return 'clip' in asset ? [asset.clip] : 'clips' in asset ? Object.values(asset.clips ?? {}) : []
 }
 
 export function missingActivities(object: SceneObject) {
@@ -314,5 +362,5 @@ export function missingActivities(object: SceneObject) {
 }
 
 export function missingAsset(object: SceneObject) {
-  return Boolean(object.requiresAsset && !object.asset) || missingActivities(object).length > 0
+  return Boolean('requiresAsset' in object && object.requiresAsset && !object.asset) || missingActivities(object).length > 0
 }

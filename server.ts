@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { assetClips, defaultRoom, missingAsset, manifestSchema, noteSchema, sha, type SceneObject } from './src/model.ts'
+import { assetClips, draftReviewSchema, defaultRoom, missingAsset, manifestSchema, noteSchema, sha, type SceneObject } from './src/model.ts'
 import { canonical, hash, sourceIdentity, sourceKey, sourceSchema } from './src/handoff.ts'
 import { acceptedModel, readAcceptedModel } from './src/mesh.ts'
 import { verifyGlbNode } from './src/glb-node.ts'
@@ -28,6 +28,8 @@ db.exec(`
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS revisions (digest TEXT PRIMARY KEY, parent TEXT, scene TEXT NOT NULL, links TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS head (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS plan_heads (plan TEXT PRIMARY KEY, digest TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS draft_reviews (revision TEXT PRIMARY KEY, checked TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, revision TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, revision TEXT NOT NULL, data TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS note_decisions (id INTEGER PRIMARY KEY, note INTEGER NOT NULL, resolved INTEGER NOT NULL, at TEXT NOT NULL);
@@ -47,10 +49,13 @@ const transaction = <T>(work: () => T) => {
     throw error
   }
 }
+const planKey = (scene: z.infer<typeof manifestSchema>) => scene.version === 3 ? canonical(scene.plan) : undefined
 function saveRevision(parent: string | null, scene: z.infer<typeof manifestSchema>, links: number[]) {
   const digest = hash(canonical({ parent, scene, links }))
   db.prepare('INSERT OR IGNORE INTO revisions VALUES(?,?,?,?)').run(digest, parent, JSON.stringify(scene), JSON.stringify(links))
-  db.prepare('INSERT INTO head VALUES(1,?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest').run(digest)
+  const plan = planKey(scene)
+  if (plan) db.prepare('INSERT INTO plan_heads VALUES(?,?) ON CONFLICT(plan) DO UPDATE SET digest=excluded.digest').run(plan, digest)
+  else db.prepare('INSERT INTO head VALUES(1,?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest').run(digest)
   return digest
 }
 const tokenPath = join(root, 'author.token')
@@ -88,7 +93,7 @@ function mappings(rev: ReturnType<typeof revision>, required: boolean) {
     if (!object.asset) continue
     const source = resolveSource(object.asset)
     if (!source) throw bad('Mapped asset not found.')
-    if (rev.scene.version === 2 && !source.ownerChecked) throw bad('Confirm the Mesh Foundry source record for ' + object.label + '.')
+    if (rev.scene.version !== 1 && !source.ownerChecked) throw bad('Confirm the Mesh Foundry source record for ' + object.label + '.')
     const file = readFileSync(join(blobDir, source.hash))
     const clips = assetClips(object.asset)
     if (clips.some(clip => !source.clips.includes(clip)) || hash(file) !== source.hash) throw bad('Mapped asset or clip is invalid.')
@@ -118,6 +123,8 @@ app.get('/api/session', async (_req, reply) => {
 })
 app.get('/api/library', async () => ({
   head: head(),
+  planHeads: db.prepare('SELECT plan, digest FROM plan_heads ORDER BY plan').all()
+    .map(row => ({ plan: JSON.parse(String(row.plan)), digest: row.digest })),
   revisions: db.prepare('SELECT digest, parent, json_extract(scene,\'$.title\') AS title FROM revisions ORDER BY rowid DESC').all(),
 }))
 app.get('/api/revision/:digest', async req => {
@@ -132,6 +139,7 @@ app.get('/api/revision/:digest', async req => {
   })
   return { ...rev, sources, notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
     .map(n => ({ id: n.id, revision: n.revision, resolved: Boolean(n.resolved), ...JSON.parse(String(n.data)) })),
+    draftReview: db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest),
     approvals: db.prepare('SELECT kind,at FROM approvals WHERE revision=?').all(rev.digest) }
 })
 app.post('/api/publish', async req => {
@@ -144,10 +152,19 @@ app.post('/api/publish', async req => {
       if (previous.request_hash !== checksum) throw bad('Request ID already used.', 409)
       return { revision: previous.revision }
     }
-    if ((head() ?? null) !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
-    for (const link of input.links) if (!db.prepare('SELECT id FROM notes WHERE id=?').get(link)) throw bad('Linked note not found.')
-    const requiredSlots = input.parent ? revision(input.parent).scene.objects.filter(object => object.requiresAsset) : []
-    if (requiredSlots.some(slot => !input.scene.objects.some(object => object.id === slot.id && object.requiresAsset && object.kind === slot.kind &&
+    const plan = planKey(input.scene)
+    const base = plan ? db.prepare('SELECT digest FROM plan_heads WHERE plan=?').get(plan)?.digest : head()
+    if ((base ?? null) !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
+    const ancestors = new Set<string>()
+    if (plan && input.links.length) {
+      for (let cursor = input.parent; cursor; cursor = revision(cursor).parent) ancestors.add(cursor)
+    }
+    for (const link of input.links) {
+      const note = db.prepare('SELECT revision FROM notes WHERE id=?').get(link)
+      if (!note || (plan && !ancestors.has(String(note.revision)))) throw bad('Linked note not found in this draft history.')
+    }
+    const requiredSlots = input.parent ? revision(input.parent).scene.objects.filter(object => 'requiresAsset' in object && object.requiresAsset) : []
+    if (requiredSlots.some(slot => !input.scene.objects.some(object => object.id === slot.id && 'requiresAsset' in object && object.requiresAsset && object.kind === slot.kind &&
       (!('requiredActivities' in slot) || (slot.requiredActivities ?? []).every(beat =>
         'requiredActivities' in object && object.requiredActivities?.includes(beat)))))) {
       throw bad('This revision must preserve required asset slots.')
@@ -179,16 +196,24 @@ app.post('/api/note/:id/decision', async req => {
 app.post('/api/revision/:digest/approve', async req => {
   requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const rev = getRevision(req.params)
-  const { kind } = z.object({ kind: z.enum(['blockout', 'final']) }).parse(req.body)
-  if (kind === 'final' && !rev.scene.room) throw bad('Publish a new revision to include the room before final approval.')
+  const { kind, review } = z.object({ kind: z.enum(['blockout', 'final']), review: draftReviewSchema.optional() }).parse(req.body)
+  if (rev.scene.version === 3 && (kind !== 'final' || !review)) throw bad('Record what you checked to approve this exact draft.')
+  if (kind === 'final' && rev.scene.version !== 3 && !rev.scene.room) throw bad('Publish a new revision to include the room before final approval.')
   mappings(rev, kind === 'final')
-  db.prepare('INSERT OR IGNORE INTO approvals VALUES(?,?,?)').run(rev.digest, kind, new Date().toISOString())
+  transaction(() => {
+    if (rev.scene.version === 3 && review) {
+      const prior = db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest)
+      if (prior && prior.checked !== review.checked) throw bad('This draft already has review evidence.', 409)
+      db.prepare('INSERT OR IGNORE INTO draft_reviews VALUES(?,?)').run(rev.digest, review.checked)
+    }
+    db.prepare('INSERT OR IGNORE INTO approvals VALUES(?,?,?)').run(rev.digest, kind, new Date().toISOString())
+  })
   return { kind }
 })
 app.post('/api/revision/:digest/export', async req => {
   requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const rev = getRevision(req.params)
-  if (!rev.scene.room) throw bad('Publish and approve a new revision that includes the room.')
+  if (rev.scene.version !== 3 && !rev.scene.room) throw bad('Publish and approve a new revision that includes the room.')
   const approval = db.prepare("SELECT kind,at FROM approvals WHERE revision=? AND kind='final'").get(rev.digest)
   if (!approval) throw bad('Final approval is required.')
   const assets = []
@@ -199,11 +224,12 @@ app.post('/api/revision/:digest/export', async req => {
   for (const entry of entries) {
     const path = 'assets/' + entry.source.hash + '.glb'
     const { ownerChecked, ...source } = entry.source
-    assets.push({ path, source: rev.scene.version === 2 ? { ...source, ownerChecked } : source,
+    assets.push({ path, source: rev.scene.version !== 1 ? { ...source, ownerChecked } : source,
       ...(entry.legacy && (hashCounts.get(source.hash) ?? 0) > 1 ? { legacy: true } : {}) })
     blobs[path] = entry.file.toString('base64')
   }
-  const manifest = { format: 'scene-rehearsal-' + rev.scene.version, revision: rev.digest, parent: rev.parent, links: rev.links, scene: rev.scene, approval, assets }
+  const manifest = { format: 'scene-rehearsal-' + rev.scene.version, revision: rev.digest, parent: rev.parent, links: rev.links, scene: rev.scene, approval, assets,
+    ...(rev.scene.version === 3 ? { draftReview: db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest) } : {}) }
   return { digest: hash(canonical(manifest)), package: { manifest, blobs } }
 })
 app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {

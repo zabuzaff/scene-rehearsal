@@ -4,7 +4,7 @@ import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams
 import { Dialog, Slider, Tabs, Toolbar, Tooltip } from 'radix-ui'
 import { evaluate, missingActivities, missingAsset, ticksPerSecond, type Manifest } from './model'
 import { lazy, Suspense, useRef } from 'react'
-import { defaultView, type View, type Pick } from './view'
+import { defaultView, draftOverview, type View, type Pick } from './view'
 const Viewport = lazy(() => import('./Viewport'))
 import { StudioSelect } from './StudioSelect'
 import { Disclosure, TransportButton } from './StudioControls'
@@ -12,7 +12,7 @@ import './style.css'
 
 type Summary = { digest: string; parent: string | null; title: string }
 type Note = View & { id: number; revision: string; scenario: string; tick: number; end?: number; text: string; resolved: boolean } & Partial<Pick>
-type Revision = Summary & { scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; notes: Note[]; approvals: { kind: string; at: string }[] }
+type Revision = Summary & { scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; notes: Note[]; draftReview?: { checked: string }; approvals: { kind: string; at: string }[] }
 
 async function api<T>(url: string, body?: unknown): Promise<T> {
   const session = body === undefined ? undefined : await api<{ token: string }>('session')
@@ -49,17 +49,17 @@ function Shell() {
       <span className="shell-divider" aria-hidden="true"/>
       <nav aria-label="Primary"><StudioSelect label="Open revision" variant="project" value={activeRevision} onOpenChange={refreshOnOpen}
         options={[{ value: '', label: 'Rehearsal library' }, ...revisions.map(rev => ({ value: rev.digest, label: rev.title, description: rev.digest.slice(0, 10) }))]}
-        onChange={id => navigate(id ? '/revision/' + id + '/first' : '/', { viewTransition: true })}/></nav>
+        onChange={id => navigate(id ? '/revision/' + id : '/', { viewTransition: true })}/></nav>
     </header>
     <main key={location.pathname.split('/').slice(0, 3).join('/')} className="page">
-      <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario" element={<Workbench revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>
+      <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario?" element={<Workbench revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>
         <Route path="*" element={<section className="library"><h1>Page not found</h1><Link viewTransition to="/">Return to library</Link></section>}/></Routes>
     </main>
   </Tooltip.Provider>
 }
 
 function Library() {
-  const [data, setData] = useState<{ head: string; revisions: Summary[] }>()
+  const [data, setData] = useState<{ head?: string; planHeads: { digest: string }[]; revisions: Summary[] }>()
   const [error, setError] = useState('')
   useEffect(() => { api<typeof data>('library').then(setData).catch(err => setError(message(err))) }, [])
   return <section className="library library-home"><header className="library-heading"><div className="library-mark"><img src="/favicon.svg" width="56" height="56" alt=""/></div><h1>Rehearsal library</h1><p>Open a revision to play through the scene, leave feedback, and review the handoff.</p></header>
@@ -67,7 +67,7 @@ function Library() {
     {!data && !error && <p role="status">Loading rehearsals…</p>}
     {data && !data.revisions.length && <p>Publish a revision with the author CLI to open it here.</p>}
     {data && <ul className="revision-list">{data.revisions.map(rev => <li key={rev.digest}>
-      <Link viewTransition to={'/revision/' + rev.digest + '/first'}><div><h2>{rev.title}</h2><span>{rev.digest.slice(0, 10)}{rev.digest === data.head ? ' · Current revision' : ''}</span></div><span className="revision-arrow" aria-hidden>→</span></Link>
+      <Link viewTransition to={'/revision/' + rev.digest}><div><h2>{rev.title}</h2><span>{rev.digest.slice(0, 10)}{(rev.digest === data.head || data.planHeads?.some(plan => plan.digest === rev.digest)) ? ' · Current revision' : ''}</span></div><span className="revision-arrow" aria-hidden>→</span></Link>
     </li>)}</ul>}
   </section>
 }
@@ -93,6 +93,7 @@ function Workbench({ revisions, onPickerOpen }: {
   const [old, setOld] = useState<Revision>()
   const [restore, setRestore] = useState<Note>()
   const [approval, setApproval] = useState(false)
+  const [checked, setChecked] = useState('')
   const [accepting, setAccepting] = useState(false)
   const [exportDigest, setExportDigest] = useState('')
   const approvalTrigger = useRef<HTMLButtonElement>(null)
@@ -104,7 +105,11 @@ function Workbench({ revisions, onPickerOpen }: {
 
   useEffect(() => {
     let live = true
-    api<Revision>('revision/' + digest).then(data => { if (live) setRev(data) }).catch(err => { if (live) setLoadError(message(err)) })
+    api<Revision>('revision/' + digest).then(data => {
+      if (!live) return
+      if (data.scene.version === 3) setView(draftOverview(data.scene.objects))
+      setRev(data)
+    }).catch(err => { if (live) setLoadError(message(err)) })
     return () => { live = false }
   }, [digest])
   useEffect(() => {
@@ -116,10 +121,12 @@ function Workbench({ revisions, onPickerOpen }: {
     }
   }, [search, rev, digest])
   const scene = rev?.scene
-  const scenario = scene?.scenarios.find(s => s.id === routeScenario) ?? scene?.scenarios[0]
+  const requestedScenario = scene?.scenarios.find(s => s.id === routeScenario)
+  const scenario = requestedScenario ?? scene?.scenarios[0]
+  const openDefault = !routeScenario || (routeScenario === 'first' && !requestedScenario)
   useEffect(() => {
-    if (routeScenario === 'first' && scenario) navigate('/revision/' + digest + '/' + scenario.id, { replace: true })
-  }, [routeScenario, scenario, navigate, digest])
+    if (openDefault && scenario) navigate('/revision/' + digest + '/' + scenario.id, { replace: true })
+  }, [openDefault, scenario, navigate, digest])
   useLayoutEffect(() => {
     setPlaying(false)
     setTick(0)
@@ -154,7 +161,7 @@ function Workbench({ revisions, onPickerOpen }: {
 
   if (loadError) return <section className="library"><h1>Rehearsal unavailable</h1><p role="alert">{loadError}</p><Link viewTransition to="/">Return to library</Link></section>
   if (!rev || !scene || !scenario) return <p role="status" className="library">Loading rehearsal…</p>
-  if (routeScenario !== 'first' && !scene.scenarios.some(s => s.id === routeScenario)) {
+  if (!openDefault && !requestedScenario) {
     return <section className="library"><h1>Scenario unavailable</h1><Link viewTransition to={'/revision/' + digest + '/' + scenario.id}>Open {scenario.label}</Link></section>
   }
 
@@ -203,20 +210,22 @@ function Workbench({ revisions, onPickerOpen }: {
   }
   const mapped = scene.objects.filter(object => object.asset).length
   const missing = scene.objects.filter(missingAsset)
-  const finalReady = Boolean(scene.room && !missing.length && readyScene === scene)
+  const draft = scene.version === 3 ? scene : undefined
+  const exportable = scene.version === 3 || Boolean(scene.room)
+  const finalReady = exportable && !missing.length && readyScene === scene && (!draft || Boolean(checked.trim()))
   const accepted = rev.approvals.some(item => item.kind === 'final')
   const acceptRevision = () => {
     if (!finalReady || accepting || accepted) return
     setAccepting(true)
     void act(async () => {
-      await api('revision/' + digest + '/approve', { kind: 'final' })
+      await api('revision/' + digest + '/approve', { kind: 'final', ...(draft ? { review: { checked } } : {}) })
       await refresh()
-      setStatus('Revision accepted.')
+      setStatus(draft ? 'Draft approved. Export the placement and intent for implementation.' : 'Revision accepted.')
     }).finally(() => setAccepting(false))
   }
   return <section className="workbench">
     <div className="workbench-header"><div><h1>{scene.title}</h1>
-      <p className="revision">Revision <code>{digest.slice(0, 10)}</code> <span>·</span> {rev.approvals.some(a => a.kind === 'final') ? scene.room ? 'Approved for implementation' : 'Legacy approval · republish to export' : rev.approvals.length ? 'Blockout approved' : mapped ? 'Asset review' : 'Blockout'}</p></div>
+      <p className="revision">Revision <code>{digest.slice(0, 10)}</code> <span>·</span> {rev.approvals.some(a => a.kind === 'final') ? exportable ? 'Approved for implementation' : 'Legacy approval · republish to export' : rev.approvals.length ? 'Blockout approved' : draft ? 'Placeholder draft' : mapped ? 'Asset review' : 'Blockout'}</p></div>
       <div className="actions"><StudioSelect label="Scenario" value={scenario.id} options={scene.scenarios.map(item => ({ value: item.id, label: item.label }))} onChange={changeScenario}/>
         <StudioSelect label="Compare revision" onOpenChange={onPickerOpen} value={old?.digest ?? ''} options={[{ value: '', label: 'Compare revision', description: 'Focus on one revision' }, ...revisions.filter(r => r.digest !== digest).map(r => ({ value: r.digest, label: r.digest.slice(0, 10), description: r.title }))]} onChange={id => {
           if (!id) setOld(undefined)
@@ -240,7 +249,9 @@ function Workbench({ revisions, onPickerOpen }: {
           <Slider.Root className="slider" value={[tick]} max={scene.duration} step={1} onValueChange={([value]) => setTime(value)}>
             <Slider.Track className="track"><Slider.Range className="range"/></Slider.Track><Slider.Thumb className="thumb" aria-label="Playback time" aria-valuetext={time(tick)}/>
           </Slider.Root>
-          <div className="markers">{scenario.events.map(event => <button key={event.id} onClick={() => { setTime(event.tick); setTab('events') }}>{time(event.tick)} · {event.feed}</button>)}</div>
+          <div className="markers">{scenario.events.map(event => <button key={event.id} onClick={() => { setTime(event.tick); setTab('events')
+            if ('camera' in event && event.camera) setView({ camera: event.camera.position, target: event.camera.target })
+          }}>{time(event.tick)} · {'label' in event ? event.label : event.feed}</button>)}</div>
         </div>
       </div>
       <aside className="inspector" aria-label="Scene inspector">
@@ -252,8 +263,23 @@ function Workbench({ revisions, onPickerOpen }: {
               {state.actors.map(actor => <div key={actor.id}><dt>{scene.objects.find(o => o.id === actor.id)?.label}</dt><dd>{actor.activity === 'quiet' ? scene.actors.find(a => a.id === actor.id)?.task : state.activity}</dd></div>)}
               {state.evidence.map(item => <div key={item.station}><dt>{scene.objects.find(o => o.id === item.station)?.label}</dt><dd>{item.freshness} · {item.health}</dd></div>)}
             </dl>}
-            <p>Repeated events from the same feed merge during an active response.</p>
-            {state.trace.length ? <ol className="event-list">{state.trace.map(event => <li key={event.id}><button onClick={() => setTime(event.tick)}>{time(event.tick)}</button><div>{event.result}<small>{event.feed}</small></div></li>)}</ol> : <p className="muted">No events have arrived at this point.</p>}
+            {draft ? <>
+              <p>{draft.intent}</p>
+              {scenario.events.flatMap(event => 'intent' in event ? [<div key={event.id} className="asset-id">
+                <p><strong>{time(event.tick)} · {event.label}</strong></p>
+                <p>{event.intent}</p>
+                {event.route && <button onClick={() => setTime(event.tick)}>Show traversal cue</button>}
+                {event.camera && <button onClick={() => {
+                  setTime(event.tick)
+                  setView({ camera: event.camera!.position, target: event.camera!.target })
+                }}>View camera cue</button>}
+              </div>] : [])}
+              {draft.pendingChecks.length > 0 && <><h3>Pending implementation checks</h3>
+                <ul>{draft.pendingChecks.map((check, index) => <li key={index}>{check}</li>)}</ul></>}
+            </> : <>
+              <p>Repeated events from the same feed merge during an active response.</p>
+              {state.trace.length ? <ol className="event-list">{state.trace.map(event => <li key={event.id}><button onClick={() => setTime(event.tick)}>{time(event.tick)}</button><div>{event.result}<small>{event.feed}</small></div></li>)}</ol> : <p className="muted">No events have arrived at this point.</p>}
+            </>}
           </Tabs.Content>
           <Tabs.Content value="objects" className="pane"><h2>Scene objects</h2><ul className="objects">
             {scene.objects.map(object => {
@@ -263,7 +289,12 @@ function Workbench({ revisions, onPickerOpen }: {
               const missing = missingActivities(object)
               const selected = pick?.object === object.id
               return <li key={object.id}>
-                <button aria-pressed={selected} onClick={() => setPick({ object: object.id, point: [0, .6, 0] })}>{object.label}</button>
+                <button aria-pressed={selected} onClick={() => setPick({ object: object.id, point: [0, draft ? 0 : .6, 0] })}>{object.label}</button>
+                {selected && 'size' in object && <div className="asset-id">
+                  <p><code>{object.id}</code>{object.pieces && <> · Pieces {object.pieces.join(', ')}</>}</p>
+                  <p>Position (m) {object.position.join(', ')}<br/>Size (m) {object.size.join(', ')}<br/>
+                    Scale {object.scale.join(', ')}<br/>Rotation (rad) {object.rotation.join(', ')}</p>
+                </div>}
                 {missing.length > 0 && <p className="asset-id">Missing clips for {missing.map(beat => activityLabels[beat]).join(', ')}.</p>}
                 {selected && asset && <div className="asset-id">
                   <p>Model <code>{asset.hash}</code>
@@ -296,28 +327,36 @@ function Workbench({ revisions, onPickerOpen }: {
         </Tabs.Root>
         <section className="handoff"><h2>Revision handoff</h2>
           {missing.length > 0 && <p className="muted">Required model or clip missing for {missing.map(o => o.label).join(', ')}.</p>}
-          {!scene.room && <p className="muted">Publish a new revision to include the room in final approval.</p>}
-          {scene.room && !missing.length && !finalReady && <p className="muted">Final approval requires a rendered scene with all mapped models and clips.</p>}
-          <Disclosure title="Import Mesh Foundry model"><form onSubmit={event => {
+          {!exportable && <p className="muted">Publish a new revision to include the room in final approval.</p>}
+          {!draft && exportable && !missing.length && !finalReady && <p className="muted">Final approval requires a rendered scene with all mapped models and clips.</p>}
+          <Disclosure title="Optional model import"><form onSubmit={event => {
             event.preventDefault()
             const fields = new FormData(event.currentTarget)
             void act(async () => {
               const file = fields.get('bundle')
               if (!(file instanceof File) || !file.size || file.size > 180_000_000) throw Error('Choose a Mesh Foundry bundle under 180 MB.')
               const asset = fields.get('asset')
-              const expected = scene.version === 2 ? { asset, project: fields.get('project'),
+              const expected = scene.version !== 1 ? { asset, project: fields.get('project'),
                 revision: fields.get('revision'), hash: fields.get('hash') } : undefined
               const result = await api<{ hash: string; sourceKey: string; clips: string[] }>('assets/import', { asset, expected, bundle: JSON.parse(await file.text()) })
-              setStatus('Imported ' + result.hash + (scene.version === 2 ? '. Source key: ' + result.sourceKey : '') + '. Clips: ' + result.clips.join(', ') + '. Publish a revision mapping the model through the CLI.')
+              setStatus('Imported ' + result.hash + (scene.version !== 1 ? '. Source key: ' + result.sourceKey : '') + '. Clips: ' + result.clips.join(', ') + '. Publish a revision mapping the model through the CLI.')
             })
-          }}><label>Project bundle<input type="file" name="bundle" accept=".json" required/></label><label>Asset ID<input name="asset" required/></label>{scene.version === 2 && <>
+          }}><label>Project bundle<input type="file" name="bundle" accept=".json" required/></label><label>Asset ID<input name="asset" required/></label>{scene.version !== 1 && <>
               <p>Enter the exact accepted model details from the owner-controlled Mesh Foundry project record.</p>
               <label>Mesh Foundry project ID<input name="project" required/></label>
               <label>Accepted model revision ID<input name="revision" required/></label>
               <label>GLB SHA-256<input name="hash" pattern="[0-9a-f]{64}" required/></label>
             </>}<button>Import model</button></form></Disclosure>
-          <div className="actions"><button onClick={requestBlockoutApproval}>Approve blockout</button><button className="primary" disabled={!finalReady || accepting || accepted} onClick={acceptRevision}>{accepted ? 'Revision accepted' : accepting ? 'Accepting…' : 'Accept revision'}</button></div>
-          {scene.room && accepted && <button className="primary" onClick={() => void act(async () => {
+          {draft ? <>
+            <p className="asset-id">Loom {draft.plan.storyboardId} / {draft.plan.sceneId}<br/>
+              Plan {draft.plan.planId} · Revision {draft.plan.planRevision} · Approval {draft.plan.approvalId}</p>
+            <label>Exact draft revision<input readOnly value={digest}/></label>
+            {accepted ? <><p>Checked by owner</p><p>{rev.draftReview?.checked}</p><p>Export the approved placement and intent for implementation.</p></> :
+              <><p>Inspect placement and playback, then record what you checked. Use Feedback for changes needed.</p>
+                <label>What did you check?<textarea required maxLength={2000} rows={3} value={checked} onChange={event => setChecked(event.target.value)}/></label>
+                <button className="primary" disabled={!finalReady || accepting} onClick={acceptRevision}>{accepting ? 'Approving…' : 'Approve this draft'}</button></>}
+          </> : <div className="actions"><button onClick={requestBlockoutApproval}>Approve blockout</button><button className="primary" disabled={!finalReady || accepting || accepted} onClick={acceptRevision}>{accepted ? 'Revision accepted' : accepting ? 'Accepting…' : 'Accept revision'}</button></div>}
+          {exportable && accepted && <button className="primary" onClick={() => void act(async () => {
             const result = await api<{ digest: string; package: unknown }>('revision/' + digest + '/export', {})
             const url = URL.createObjectURL(new Blob([JSON.stringify(result.package)], { type: 'application/json' }))
             const link = document.createElement('a')
@@ -326,7 +365,7 @@ function Workbench({ revisions, onPickerOpen }: {
             link.click()
             setTimeout(() => URL.revokeObjectURL(url), 1000)
             setExportDigest(result.digest)
-          })}>Export approved package</button>}
+          })}>{draft ? 'Export implementation handoff' : 'Export approved package'}</button>}
           {exportDigest && <label>Confirm this digest separately with the consumer<input readOnly value={exportDigest}/></label>}
         </section>
         {status && <p className="notice" role="status">{status}</p>}

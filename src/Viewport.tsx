@@ -14,7 +14,16 @@ function box(parent: T.Object3D, size: Vec, pos: Vec, color: number) {
 }
 
 function primitive(object: Manifest['objects'][number], group: T.Group) {
-  if (object.kind === 'researcher') {
+  if ('size' in object) {
+    group.scale.fromArray(object.scale)
+    group.rotation.set(...object.rotation, 'XYZ')
+    if (object.kind === 'box') box(group, object.size, [0, 0, 0], 0x778d9c)
+    else {
+      const marker = new T.Mesh(new T.OctahedronGeometry(.5), new T.MeshStandardMaterial({ color: 0xe3ba78 }))
+      marker.scale.fromArray(object.size)
+      group.add(marker)
+    }
+  } else if (object.kind === 'researcher') {
     const color = object.id === 'maya' ? 0x315d79 : 0x9a6042
     const torso = new T.Mesh(new T.CapsuleGeometry(.21, .42, 6, 12), new T.MeshStandardMaterial({ color }))
     torso.position.y = 1.12
@@ -61,24 +70,26 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     const light = new T.DirectionalLight(0xffeed7, 2)
     light.position.set(3, 9, 5)
     scene.add(light)
-    const camera = new T.PerspectiveCamera(40, 1, .1, 80)
+    const camera = new T.PerspectiveCamera(40, 1, manifest.version === 3 ? .01 : .1, 80)
     camera.position.set(...view.camera)
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-    renderer.domElement.setAttribute('aria-label', 'Interactive 3D office')
+    renderer.domElement.setAttribute('aria-label', 'Interactive 3D scene')
     element.append(renderer.domElement)
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.target.set(...view.target)
-    controls.maxPolarAngle = Math.PI / 2.1
-    controls.maxDistance = 27
-    controls.minDistance = 3
+    if (manifest.version !== 3) {
+      controls.maxPolarAngle = Math.PI / 2.1
+      controls.maxDistance = 27
+      controls.minDistance = 3
+    }
     controls.update()
     controlsRef.current = controls
     const report = () => current.current.onView?.({ camera: camera.position.toArray(), target: controls.target.toArray() })
     controls.addEventListener('end', report)
-    for (const part of manifest.room ?? defaultRoom) box(scene, part.size, part.position, part.color)
+    if (manifest.version !== 3) for (const part of manifest.room ?? defaultRoom) box(scene, part.size, part.position, part.color)
     const grid = new T.GridHelper(8, 16, 0x78817e, 0x8e9990)
     grid.position.y = -.03
-    if (manifest.version === 1) scene.add(grid)
+    if (manifest.version !== 2) scene.add(grid)
     else { grid.geometry.dispose(); grid.material.dispose() }
     const groups = new Map<string, T.Group>()
     const mixers = new Map<string, { mixer: T.AnimationMixer; actions: Map<string, T.AnimationAction> }>()
@@ -138,9 +149,18 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
         }, undefined, () => { if (active) setError('Mapped asset unavailable for ' + object.label) })
       }
     }
-    const path = new T.Line(new T.BufferGeometry().setFromPoints((manifest.version === 1 ? manifest.route : manifest.outbound.map(p => p.position)).map(([x, y, z]) => new T.Vector3(x, y + .025, z))),
-      new T.LineBasicMaterial({ color: 0x4a7789 }))
-    scene.add(path)
+    const addRoute = (points: Vec[], height: number) => {
+      const path = new T.Line(new T.BufferGeometry().setFromPoints(points.map(([x, y, z]) => new T.Vector3(x, y + height, z))),
+        new T.LineBasicMaterial({ color: manifest.version === 3 ? 0x9bbcff : 0x4a7789 }))
+      scene.add(path)
+      return path
+    }
+    const routes = manifest.version === 3 ? manifest.scenarios.flatMap(s => s.events.flatMap(event =>
+      event.route ? [{ scenario: s.id, tick: event.tick, line: addRoute(event.route, 0) }] : [])) : []
+    if (manifest.version !== 3) addRoute(manifest.version === 1 ? manifest.route : manifest.outbound.map(p => p.position), .025)
+    const draftBounds = manifest.version === 3
+      ? new T.Box3().setFromObject(scene).getBoundingSphere(new T.Sphere())
+      : undefined
     const marker = new T.Mesh(new T.SphereGeometry(.11, 12, 8), new T.MeshBasicMaterial({ color: 0xabbcff }))
     scene.add(marker)
     const resize = new ResizeObserver(() => {
@@ -181,6 +201,7 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     renderer.setAnimationLoop(() => {
       const frame = current.current
       const state = evaluate(manifest, frame.scenario, frame.tick)
+      for (const route of routes) route.line.visible = route.scenario === frame.scenario && route.tick <= frame.tick
       const walking = state.activity.startsWith('Walking') || state.activity.startsWith('Returning')
       if (manifest.version === 1) {
         const responder = groups.get(manifest.responder)
@@ -198,15 +219,15 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
       for (const object of manifest.objects) {
         const actor = state.actors.find(actor => actor.id === object.id)
         const moving = actor ? actor.activity === 'outbound' || actor.activity === 'return' :
-          object.id === manifest.responder && walking
+          manifest.version !== 3 && object.id === manifest.responder && walking
         const group = groups.get(object.id)
         for (const leg of group?.children.filter(node => node.name.endsWith('-leg')) ?? []) {
           leg.rotation.x = moving ? Math.sin(frame.tick * .6) * (leg.name === 'left-leg' ? .45 : -.45) : 0
         }
         const animation = mixers.get(object.id)
         const asset = object.asset
-        if (!animation || !asset) continue
-        const clip = 'clip' in asset ? asset.clip : actor && asset.clips?.[actor.activity]
+        if (manifest.version === 3 || !animation || !asset) continue
+        const clip = 'clip' in asset ? asset.clip : actor && 'clips' in asset && asset.clips?.[actor.activity]
         const seconds = (actor?.clipTick ?? (object.id !== manifest.responder || walking ? frame.tick : 0)) / ticksPerSecond
         for (const [name, action] of animation.actions) {
           action.enabled = name === clip
@@ -221,6 +242,13 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
         const anchor = frame.pin.object ? groups.get(frame.pin.object) : undefined
         const point = new T.Vector3(...frame.pin.point)
         marker.position.copy(anchor ? anchor.localToWorld(point) : point)
+      }
+      if (draftBounds) {
+        const far = Math.max(80, camera.position.distanceTo(draftBounds.center) + draftBounds.radius + 1)
+        if (far !== camera.far) {
+          camera.far = far
+          camera.updateProjectionMatrix()
+        }
       }
       renderer.render(scene, camera)
       if (!rendered && contextAvailable && pending === 0) {
