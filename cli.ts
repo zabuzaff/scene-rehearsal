@@ -27,14 +27,15 @@ try {
   } else {
     const publish = command === 'publish'
     const importing = command === 'import-model'
-    const path = importing ? '/api/agent/assets/import' : publish ? '/api/publish' : command === 'read' ? '/api/revision/' + encodeURIComponent(file) : '/api/library'
-    if (!['publish', 'read', 'list', 'import-model'].includes(command)) throw Error('Use list, read DIGEST, publish FILE, import-model REQUEST, or verify PACKAGE TRUSTED_DIGEST.')
-    let body = publish || importing ? readFileSync(file, 'utf8') : undefined
+    const removing = command === 'remove'
+    const path = importing ? '/api/agent/assets/import' : publish ? '/api/publish' : removing ? '/api/revision/' + encodeURIComponent(file) + '/remove' : command === 'read' ? '/api/revision/' + encodeURIComponent(file) : '/api/library'
+    if (!['publish', 'read', 'list', 'import-model', 'remove'].includes(command)) throw Error('Use list, read DIGEST, remove DIGEST, publish FILE, import-model REQUEST, or verify PACKAGE TRUSTED_DIGEST.')
+    let body = publish || importing ? readFileSync(file, 'utf8') : removing ? '{}' : undefined
     if (importing) {
       const { bundlePath, meshFoundryDataDir, expected } = JSON.parse(body!)
       body = JSON.stringify({ bundle: JSON.parse(readFileSync(bundlePath, 'utf8')), meshFoundryDataDir, expected })
     }
-    const response = await fetch(origin + path, publish || importing ? {
+    const response = await fetch(origin + path, publish || importing || removing ? {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + readFileSync(join(root, 'author.token'), 'utf8') },
       body,
     } : undefined)

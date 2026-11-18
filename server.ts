@@ -223,6 +223,24 @@ app.post('/api/publish', async req => {
     return { revision: digest }
   })
 })
+app.post('/api/revision/:digest/remove', async req => {
+  requireRole(req.headers.authorization === 'Bearer ' + authorToken)
+  const rev = getRevision(req.params)
+  if (db.prepare('SELECT 1 FROM drafts WHERE digest=?').get(rev.digest)) throw bad('A scene\'s live draft cannot be removed.', 409)
+  return transaction(() => {
+    const notes = db.prepare('SELECT id FROM notes WHERE revision=?').all(rev.digest).map(row => Number(row.id))
+    for (const id of notes) db.prepare('DELETE FROM note_decisions WHERE note=?').run(id)
+    db.prepare('DELETE FROM notes WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM approvals WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM draft_reviews WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM receipts WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM head WHERE digest=?').run(rev.digest)
+    db.prepare('DELETE FROM plan_heads WHERE digest=?').run(rev.digest)
+    db.prepare('UPDATE revisions SET parent=NULL WHERE parent=?').run(rev.digest)
+    db.prepare('DELETE FROM revisions WHERE digest=?').run(rev.digest)
+    return { removed: rev.digest }
+  })
+})
 app.post('/api/revision/:digest/note', async req => {
   requireRole(req.headers.authorization === 'Bearer ' + reviewToken)
   const rev = getRevision(req.params)

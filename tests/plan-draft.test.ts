@@ -90,6 +90,12 @@ test('publish, play, review and export a placeholder draft beside a legacy histo
     assert.equal((await cli('list')).drafts.length, 1)
     assert.ok((await post(path + 'approve', { kind: 'final', review })).ok)
     assert.deepEqual(await cli('publish', sample), published)
+    // Old history can be removed, a scene's live draft cannot.
+    assert.equal((await post('revision/' + draft.digest + '/remove', {}, author)).status, 409)
+    assert.equal((await post('revision/' + legacy.revision + '/remove', {}, token)).status, 403)
+    assert.deepEqual(await cli('remove', legacy.revision), { removed: legacy.revision })
+    assert.equal((await cli('list')).head, undefined)
+    assert.ok((await cli('read', draft.digest)).notes.length === 1)
     // A different scene gets its own draft; plan fields are optional.
     const other = { ...scene, plan: { storyboardId: scene.plan.storyboardId, sceneId: 'other-scene' } }
     const second = await post('publish', { request: 'other', scene: other }, author)
