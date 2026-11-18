@@ -10,9 +10,16 @@ import { StudioSelect } from './StudioSelect'
 import { Disclosure, TransportButton } from './StudioControls'
 import './style.css'
 
+const reviewPrompt = (origin: string, digest: string, scenario: string, title: string) => `You are an independent reviewer of a Scene Rehearsal placeholder draft. Stay read-only: change nothing in Rehearsal, Scene Loom or any game.
+
+Draft: ${title}
+Open: ${origin}/revision/${digest}/${scenario}
+Read it with the Scene Rehearsal CLI from its checkout: npm --silent run cli -- read ${digest} (the CLI finds the service by itself, so use no environment variables or paths).
+
+Check the placements and stable piece IDs, units (meters, Y-up, XYZ radians), scenarios and timing, camera and traversal cues, intended behaviors and pending checks against the scene's intent. Look for overlaps, wrong scale, missing or duplicated pieces, cues that do not match behaviors, and anything that would mislead the game implementation. Finish with a short verdict, numbered findings (what, where, why it matters) and one paste-ready correction instruction for the builder chat that updates this same draft. I will send it back myself and accept the draft in Rehearsal when it is right.`
 type Summary = { digest: string; parent: string | null; title: string }
 type Note = View & { id: number; revision: string; scenario: string; tick: number; end?: number; text: string; resolved: boolean } & Partial<Pick>
-type Revision = Summary & { scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; notes: Note[]; draftReview?: { checked: string }; approvals: { kind: string; at: string }[] }
+type Revision = Summary & { draftRev?: number; scene: Manifest; sources: { object: string; project: string; asset: string; revision: string; hash: string }[]; notes: Note[]; draftReview?: { checked: string }; approvals: { kind: string; at: string }[] }
 
 async function api<T>(url: string, body?: unknown): Promise<T> {
   const session = body === undefined ? undefined : await api<{ token: string }>('session')
@@ -59,7 +66,7 @@ function Shell() {
 }
 
 function Library() {
-  const [data, setData] = useState<{ head?: string; planHeads: { digest: string }[]; revisions: Summary[] }>()
+  const [data, setData] = useState<{ head?: string; planHeads: { digest: string }[]; drafts?: { digest: string }[]; revisions: Summary[] }>()
   const [error, setError] = useState('')
   useEffect(() => { api<typeof data>('library').then(setData).catch(err => setError(message(err))) }, [])
   return <section className="library library-home"><header className="library-heading"><div className="library-mark"><img src="/favicon.svg" width="56" height="56" alt=""/></div><h1>Rehearsal library</h1><p>Open a revision to play through the scene, leave feedback, and review the handoff.</p></header>
@@ -67,7 +74,7 @@ function Library() {
     {!data && !error && <p role="status">Loading rehearsals…</p>}
     {data && !data.revisions.length && <p>Publish a revision with the author CLI to open it here.</p>}
     {data && <ul className="revision-list">{data.revisions.map(rev => <li key={rev.digest}>
-      <Link viewTransition to={'/revision/' + rev.digest}><div><h2>{rev.title}</h2><span>{rev.digest.slice(0, 10)}{(rev.digest === data.head || data.planHeads?.some(plan => plan.digest === rev.digest)) ? ' · Current revision' : ''}</span></div><span className="revision-arrow" aria-hidden>→</span></Link>
+      <Link viewTransition to={'/revision/' + rev.digest}><div><h2>{rev.title}</h2><span>{rev.digest.slice(0, 10)}{(rev.digest === data.head || data.drafts?.some(item => item.digest === rev.digest) || data.planHeads?.some(plan => plan.digest === rev.digest)) ? ' · Current revision' : ''}</span></div><span className="revision-arrow" aria-hidden>→</span></Link>
     </li>)}</ul>}
   </section>
 }
@@ -348,13 +355,15 @@ function Workbench({ revisions, onPickerOpen }: {
               <label>GLB SHA-256<input name="hash" pattern="[0-9a-f]{64}" required/></label>
             </>}<button>Import model</button></form></Disclosure>
           {draft ? <>
-            <p className="asset-id">Loom {draft.plan.storyboardId} / {draft.plan.sceneId}<br/>
-              Plan {draft.plan.planId} · Revision {draft.plan.planRevision} · Approval {draft.plan.approvalId}</p>
-            <label>Exact draft revision<input readOnly value={digest}/></label>
+            <p className="asset-id">Loom {draft.plan.storyboardId} / {draft.plan.sceneId}{rev.draftRev ? <> · Draft update {rev.draftRev}</> : null}</p>
+            <button onClick={() => void act(async () => {
+              await navigator.clipboard.writeText(reviewPrompt(window.location.origin, digest, scenario.id, rev.scene.title))
+              setStatus('Review prompt copied. Paste it into a new chat.')
+            })}>Copy review prompt</button>
             {accepted ? <><p>Checked by owner</p><p>{rev.draftReview?.checked}</p><p>Export the approved placement and intent for implementation.</p></> :
               <><p>Inspect placement and playback, then record what you checked. Use Feedback for changes needed.</p>
                 <label>What did you check?<textarea required maxLength={2000} rows={3} value={checked} onChange={event => setChecked(event.target.value)}/></label>
-                <button className="primary" disabled={!finalReady || accepting} onClick={acceptRevision}>{accepting ? 'Approving…' : 'Approve this draft'}</button></>}
+                <button className="primary" disabled={!finalReady || accepting} onClick={acceptRevision}>{accepting ? 'Accepting…' : 'Accept draft'}</button></>}
           </> : <div className="actions"><button onClick={requestBlockoutApproval}>Approve blockout</button><button className="primary" disabled={!finalReady || accepting || accepted} onClick={acceptRevision}>{accepted ? 'Revision accepted' : accepting ? 'Accepting…' : 'Accept revision'}</button></div>}
           {exportable && accepted && <button className="primary" onClick={() => void act(async () => {
             const result = await api<{ digest: string; package: unknown }>('revision/' + digest + '/export', {})

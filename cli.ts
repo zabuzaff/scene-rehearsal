@@ -1,12 +1,26 @@
 import { readFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { verifyPackage } from './src/handoff.ts'
 
+async function locate(root: string) {
+  if (process.env.SCENE_REHEARSAL_PORT) return 'http://127.0.0.1:' + process.env.SCENE_REHEARSAL_PORT
+  const read = () => { try { return JSON.parse(readFileSync(join(root, 'runtime.json'), 'utf8')) as { url: string; pid: number } } catch { return undefined } }
+  const live = (info?: { pid: number }) => { if (!info) return false; try { process.kill(info.pid, 0); return true } catch { return false } }
+  let info = read()
+  if (!live(info)) {
+    spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(import.meta.dirname, 'server.ts')], { detached: true, stdio: 'ignore', env: process.env }).unref()
+    for (let i = 0; i < 50 && !(info = read(), live(info)); i++) await new Promise(r => setTimeout(r, 200))
+    if (!live(info)) throw Error('Could not start Scene Rehearsal. Run npm start in its checkout.')
+  }
+  return info!.url
+}
+
 const [command, file, digest] = process.argv.slice(2)
 try {
   const root = process.env.SCENE_REHEARSAL_DATA_DIR ?? join(homedir(), 'Library/Application Support/Scene Rehearsal')
-  const origin = 'http://127.0.0.1:' + (process.env.SCENE_REHEARSAL_PORT ?? '4331')
+  const origin = command === 'verify' ? '' : await locate(root)
   let result
   if (command === 'verify') {
     result = verifyPackage(JSON.parse(readFileSync(file, 'utf8')), new Set([digest]))

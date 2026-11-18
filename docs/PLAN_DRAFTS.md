@@ -1,20 +1,27 @@
-# Plan-linked placeholder drafts
+# Placeholder drafts
 
-Loom owns orchestration plan approval and checks that the plan and approval are current before invoking the author CLI. Rehearsal stores the supplied identity in the immutable draft. Its author credential authorizes publication in the selected library. Loom verifies the approval through its own records.
+There is one mutable draft per Loom storyboard scene. Publishing again for the same `storyboardId` and `sceneId` overwrites that draft in place. There is no revision chain, parent digest or per-plan head. The owner reviews it in Rehearsal and clicks **Accept draft**. Loom only links to it.
 
 ## Publish and read back
 
-Use the intended absolute canonical library directory and loopback port for both service and CLI. Run `npm start -- --status` to confirm the effective data directory before writing. Then use:
+The CLI needs no setup. It finds the running service through `runtime.json` in the data directory (default `~/Library/Application Support/Scene Rehearsal`) and starts it if it is not running. The service uses port 4331, or a free port if that one is busy. `SCENE_REHEARSAL_DATA_DIR` and `SCENE_REHEARSAL_PORT` remain as overrides for tests and isolated libraries only.
 
 ```sh
 npm --silent run cli -- list
-npm --silent run cli -- publish /absolute/draft-request.json
-npm --silent run cli -- read REVISION_SHA256
+npm --silent run cli -- publish draft-request.json
+npm --silent run cli -- read DRAFT_ID
 ```
 
-The request shape is `{ request, parent, scene, links? }`. See [Lighthouse landing](../fixtures/lighthouse-arrival.json) for a fictional example. For v3, use the full `scene.plan` tuple from Loom (`storyboardId`, `sceneId`, `planId`, `planRevision`, `approvalId`). Each tuple has its own head in `list.planHeads`. Use `parent: null` for an absent tuple. For a revision of an existing draft under the same approved plan, use its current tuple head and optionally link feedback from that draft's ancestry. The separate top-level `head` still serves v1/v2. A clean v3 draft can therefore start in an existing library without extending or replacing the legacy head. A newly approved plan tuple starts a separate history.
+The request shape is `{ request, scene, links? }`. `parent` is accepted and ignored for v3. See [Lighthouse landing](../fixtures/lighthouse-arrival.json). For v3, `scene.plan` needs `storyboardId` and `sceneId`. `planId`, `planRevision` and `approvalId` are optional and kept only for older drafts.
 
-Publication returns `{ revision }` with the immutable SHA-256. Retrying identical input with the same request ID returns the original revision, including after newer revisions are published. Read the revision back to confirm the plan tuple, digest, parent and scenario IDs. Use the canonical scenario URL `http://127.0.0.1:PORT/revision/DIGEST/SCENARIO_ID`. Loom should record the canonical `dataDir`, `port`, digest as `revisionId`, URL as `link`, plan tuple and exact parent against the storyboard and scene. Record publication before any draft review. On a writeback conflict, reconcile the exact published digest and plan identity before retrying Loom's write.
+Publication returns `{ revision }`, the stable draft ID. It stays the same for the life of the scene's draft, so the URL `http://127.0.0.1:PORT/revision/DRAFT_ID/SCENARIO_ID` does not change. `read` shows `draftRev` (a counter of content changes) and `updatedAt`. `list` returns `drafts` with each `key` (`storyboardId/sceneId`), `digest`, `rev` and `updated`.
+
+- **Update:** a publish with changed content replaces the draft, bumps `draftRev`, and clears acceptance and its review text. A publish with identical content changes nothing and keeps acceptance.
+- **Feedback pins:** pins stay on the draft across updates. Pins are stored with the draft, so an update keeps them even if the object they point at was removed. Link pins you addressed with `links`, and the owner resolves them.
+- **Retries:** an identical request with the same request ID returns the same draft.
+- **Older history:** v1/v2 revisions and v3 revisions published before this change stay readable by their digests.
+
+The owner keeps no exact-revision guarantee. Acceptance applies to the draft content at the time the owner clicked, and any later change resets it.
 
 ## Author and inspect
 
@@ -22,10 +29,10 @@ Coordinates and proxy dimensions use meters in a Y-up frame. Each box or marker 
 
 Scenarios advance at 10 ticks per second. As playback reaches a traversal cue, its authored polyline appears. Select a camera cue to inspect its supplied position and target. The event list carries intended behaviors and timing, and the pending checks carry work for the game implementation. Traversal previews show a path, with player control, collision, navigation, animation and game timing left to implementation checks.
 
-Reviewers open the published digest, use placement and playback controls, and pin feedback for needed changes. To approve, record what was checked and choose **Approve this draft**. The review action uses the local reviewer session, with `POST /api/revision/DIGEST/approve` and body `{ "kind": "final", "review": { "checked": "…" } }`. `read DIGEST` returns the review text as `draftReview.checked` and the approval timestamp in `approvals`. Loom should read this exact evidence back and check that the digest and plan still match the recorded active draft before advancing to implementation. A child revision starts with its own review state.
+Reviewers open the draft, use **Copy review prompt** to start a read-only review in a new chat, use placement and playback controls, and pin feedback for needed changes. To approve, record what was checked and choose **Approve this draft**. The review action (**Accept draft**) uses the local reviewer session, with `POST /api/revision/DRAFT_ID/approve` and body `{ "kind": "final", "review": { "checked": "…" } }`. `read DIGEST` returns the review text as `draftReview.checked` and the approval timestamp in `approvals`. Loom should read this exact evidence back and check that the digest and plan still match the recorded active draft before advancing to implementation. A child revision starts with its own review state.
 
 The approved handoff is a `scene-rehearsal-3` package containing the exact plan, proxy transforms, piece IDs, cues, pending checks and review evidence. A placeholder-only export has empty `assets` and `blobs`. Use `cli verify PACKAGE OWNER_CONFIRMED_SHA256` for package integrity. The game implementer should carry the approved placements and intent forward and run the pending implementation checks in the game.
 
 ## Loom integration
 
-Loom needs a plan-gated publication record, a subsequent exact-draft review record, and a history-preserving reset that deactivates legacy fit actions for the affected scene. The installed legacy `rehearsal.record` contract requires a review first and creates a snapshot on writes. It cannot carry this sequence as-is. Reconcile any reset against the exact recorded storyboard, scene, library and digest. A reset in Loom can preserve the library and historical URL while leaving the v3 plan scope empty until owner approval.
+Loom records the plan, then a `draft` link (`url`, `draftId`, `scenarioId`) after reading this service. Loom's start-implementation prompt reads the draft back, requires the final approval, and continues in the game. Package digests identify one export snapshot only.

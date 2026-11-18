@@ -1,6 +1,6 @@
 # Scene Rehearsal development plan
 
-This document describes the historical v1/v2 workflow. For new scenes use the [plan-linked placeholder draft workflow](PLAN_DRAFTS.md).
+This document describes the historical v1/v2 workflow. For new scenes use the [single mutable draft workflow](PLAN_DRAFTS.md). Its revisions, parents and heads below are historical.
 
 ## Baseline and requirements
 

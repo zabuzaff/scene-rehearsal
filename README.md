@@ -40,7 +40,7 @@ Run `npm run typecheck`, `npm test`, and `npm run build`. Use an isolated local 
 
 ## Historical Kairo fixture (v2)
 
-The [Kairo plan](docs/KAIRO_REHEARSAL_PLAN.md) and [authored draft](fixtures/kairo-office.json) cover the two-station office with synthetic quiet, interruption and recovery scenarios. To publish it locally, use an empty dedicated library. Use the same data directory and port for the CLI and later starts.
+The [Kairo plan](docs/KAIRO_REHEARSAL_PLAN.md) and [authored draft](fixtures/kairo-office.json) cover the two-station office with synthetic quiet, interruption and recovery scenarios. To publish it locally, use an isolated library: the overrides below are for tests and fixtures only. Normal use needs no variables.
 
 ```sh
 export SCENE_REHEARSAL_DATA_DIR=/private/tmp/kairo-rehearsal-local
@@ -61,7 +61,7 @@ Open http://127.0.0.1:4332 and select **Kairo · Research and collector office**
 
 ### Import from a Mesh Foundry handoff prompt
 
-Start Scene Rehearsal with `SCENE_REHEARSAL_MESH_FOUNDRY_PORT` set to the port of the running trusted local Mesh Foundry library. The agent uses Mesh Foundry's CLI to export a private project bundle, then runs `npm run cli -- import-model /absolute/import-request.json` with the usual rehearsal library and port settings. The request has `bundlePath` (the absolute bundle path) `meshFoundryDataDir` (the absolute source data directory from the prompt), and `expected` (the copied `project`, `asset`, `revision`, `hash` and ordered `clips` fields). The server checks the GLB and its clips, then compares the exact source identity with the configured Mesh Foundry service's live model-stage acceptance after verifying the service reports the same library. Use the returned `sourceKey` when publishing the v2 draft. This author workflow leaves final approval and export in the local browser.
+Mesh Foundry is found through its own `runtime.json`. Start it before importing (`SCENE_REHEARSAL_MESH_FOUNDRY_PORT` still overrides). The agent uses Mesh Foundry's CLI to export a private project bundle, then runs `npm run cli -- import-model /absolute/import-request.json` with the usual rehearsal library and port settings. The request has `bundlePath` (the absolute bundle path) optional `meshFoundryDataDir` (only for a non-default Mesh Foundry library), and `expected` (the copied `project`, `asset`, `revision`, `hash` and ordered `clips` fields). The server checks the GLB and its clips, then compares the exact source identity with the configured Mesh Foundry service's live model-stage acceptance after verifying the service reports the same library. Use the returned `sourceKey` when publishing the v2 draft. This author workflow leaves final approval and export in the local browser.
 
 ### Binding one piece of a GLB
 

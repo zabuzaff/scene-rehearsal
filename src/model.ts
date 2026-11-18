@@ -222,8 +222,8 @@ const officeSchema = z.strictObject({
 
 type OfficeManifest = z.infer<typeof officeSchema>
 export const planIdentity = z.strictObject({
-  storyboardId: loomId, sceneId: loomId, planId: loomId,
-  planRevision: z.union([z.number().int().nonnegative(), loomId]), approvalId: loomId,
+  storyboardId: loomId, sceneId: loomId, planId: loomId.optional(),
+  planRevision: z.union([z.number().int().nonnegative(), loomId]).optional(), approvalId: loomId.optional(),
 })
 const intent = z.string().trim().min(1).max(2000)
 export const draftReviewSchema = z.strictObject({ checked: intent })

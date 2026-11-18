@@ -78,7 +78,7 @@ test('agent import checks credentials, library, clips and live acceptance before
     live = 'r1'
     assert.equal((await post('agent/assets/import', body)).status, 200)
     assert.equal((await fetch(origin + '/api/assets/' + digest)).status, 200)
-    assert.deepEqual(await (await fetch(origin + '/api/library')).json(), { revisions: [], planHeads: [] })
+    assert.deepEqual(await (await fetch(origin + '/api/library')).json(), { revisions: [], planHeads: [], drafts: [] })
     const draft = JSON.parse(await readFile(new URL('../fixtures/kairo-office.json', import.meta.url), 'utf8'))
     const published = await post('publish', draft)
     assert.equal(published.status, 200)
