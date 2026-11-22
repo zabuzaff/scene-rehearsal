@@ -222,11 +222,17 @@ const officeSchema = z.strictObject({
 
 type OfficeManifest = z.infer<typeof officeSchema>
 export const planIdentity = z.strictObject({
-  storyboardId: loomId, sceneId: loomId, planId: loomId,
-  planRevision: z.union([z.number().int().nonnegative(), loomId]), approvalId: loomId,
+  storyboardId: loomId, sceneId: loomId, planId: loomId.optional(),
+  planRevision: z.union([z.number().int().nonnegative(), loomId]).optional(), approvalId: loomId.optional(),
 })
 const intent = z.string().trim().min(1).max(2000)
 export const draftReviewSchema = z.strictObject({ checked: intent })
+const buildHints = z.strictObject({
+  anchor: z.enum(['base-center', 'center']).optional(),
+  walkable: z.boolean().optional(),
+  clearance: z.array(z.strictObject({ id, label: z.string().min(1).max(80), size: roomSchema.element.shape.size, offset: point.optional() })).max(16).optional(),
+  notes: z.string().min(1).max(400).optional(),
+})
 const draftSchema = z.strictObject({
   version: z.literal(3), title: z.string().trim().min(1).max(120),
   unit: z.literal('meter'), up: z.literal('Y'), duration: tick.min(1),
@@ -240,12 +246,15 @@ const draftSchema = z.strictObject({
     rotation: point,
     pieces: z.array(loomId).min(1).max(100).optional(),
     asset: objectV2.shape.asset.unwrap().pick({ hash: true, node: true, source: true }).optional(),
+    build: buildHints.optional(),
   })).min(1).max(128),
+  scaleReference: z.strictObject({ asset: z.string().min(1).max(128), label: z.string().min(1).max(80).optional(), height: z.number().positive().max(100).optional() }).optional(),
   scenarios: z.array(z.strictObject({
     id, label: z.string().min(1).max(80),
     events: z.array(z.strictObject({ id, tick, label: z.string().min(1).max(80), intent,
       route: z.array(point).min(2).max(64).optional(),
       camera: z.strictObject({ position: point, target: point }).optional(),
+      targets: z.array(z.strictObject({ object: loomId, interact: z.boolean().optional(), clip: z.string().min(1).max(80).optional() })).max(16).optional(),
     })).max(100),
   })).min(1).max(16),
 }).superRefine((scene, ctx) => {
@@ -255,6 +264,10 @@ const draftSchema = z.strictObject({
       !unique(scene.scenarios.map(s => s.id)) ||
       scene.scenarios.some(s => !unique(s.events.map(e => e.id)) || s.events.some(e => e.tick > scene.duration))) {
     ctx.addIssue({ code: 'custom', message: 'Use unique object, piece, scenario and cue IDs and keep cues within the draft duration.' })
+  }
+  const objectIds = new Set(scene.objects.map(o => o.id))
+  if (scene.scenarios.some(s => s.events.some(e => e.targets?.some(t => !objectIds.has(t.object))))) {
+    ctx.addIssue({ code: 'custom', message: 'A cue target must name an object in this draft.' })
   }
   if (scene.scenarios.some(s => s.events.some(e => e.camera && samePoint(e.camera.position, e.camera.target)))) {
     ctx.addIssue({ code: 'custom', message: 'A camera cue needs distinct position and target.' })

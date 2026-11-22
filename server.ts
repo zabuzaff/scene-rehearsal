@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import serveStatic from '@fastify/static'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, realpathSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync, realpathSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
@@ -10,17 +10,60 @@ import { assetClips, draftReviewSchema, defaultRoom, missingAsset, manifestSchem
 import { canonical, hash, sourceIdentity, sourceKey, sourceSchema } from './src/handoff.ts'
 import { acceptedModel, readAcceptedModel } from './src/mesh.ts'
 import { verifyGlbNode } from './src/glb-node.ts'
+import { buildAssetSpec, contentDigest } from './src/spec.ts'
+import { execFileSync } from 'node:child_process'
 
 const root = process.env.SCENE_REHEARSAL_DATA_DIR ?? join(homedir(), 'Library/Application Support/Scene Rehearsal')
-const port = Number(process.env.SCENE_REHEARSAL_PORT ?? 4331)
+let port = Number(process.env.SCENE_REHEARSAL_PORT ?? 4331)
 if (!isAbsolute(root) || !Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Invalid local configuration.')
-const origin = 'http://127.0.0.1:' + port
+let origin = 'http://127.0.0.1:' + port
+const runtimePath = join(root, 'runtime.json')
+const checkoutRoot = import.meta.dirname
+const git = (...args: string[]) => { try { return execFileSync('git', args, { cwd: checkoutRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' } }
+const packageVersion = (JSON.parse(readFileSync(join(checkoutRoot, 'package.json'), 'utf8')) as { version: string }).version
+const codeRevision = (git('rev-parse', '--short', 'HEAD') || 'unknown') + (git('status', '--porcelain') ? '+uncommitted' : '')
+type RuntimeInfo = { url: string; pid: number; port?: number; dataDir?: string; revision?: string; version?: string; startedAt?: string }
+const readRuntime = () => { try { return JSON.parse(readFileSync(runtimePath, 'utf8')) as RuntimeInfo } catch { return undefined } }
+const isAlive = (pid: unknown) => { if (!Number.isInteger(pid)) return false; try { process.kill(pid as number, 0); return true } catch { return false } }
+const describe = (info: RuntimeInfo) => info.url + ' (pid ' + info.pid + ', port ' + (info.port ?? new URL(info.url).port) + ', code ' + (info.revision ?? 'unknown') + ', started ' + (info.startedAt ?? 'unknown') + ')'
 if (process.argv.includes('--status')) {
-  console.log(JSON.stringify({ root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite') }))
+  const info = readRuntime()
+  const live = info && isAlive(info.pid) ? info : undefined
+  console.log(JSON.stringify({
+    root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite'),
+    checkout: { path: checkoutRoot, revision: codeRevision, version: packageVersion },
+    running: live ? { ...live, port: live.port ?? Number(new URL(live.url).port), dataDir: live.dataDir ?? root, stale: live.revision !== codeRevision } : null,
+  }))
   process.exit(0)
 }
 mkdirSync(root, { recursive: true, mode: 0o700 })
 if (realpathSync(root) !== root) throw Error('Use the canonical data path.')
+const running = readRuntime()
+if (running && isAlive(running.pid)) {
+  console.error('Scene Rehearsal is already running for this data directory, so no second instance was started.\nRunning: ' + describe(running) + '\nData: ' + root +
+    (running.revision && running.revision !== codeRevision ? '\nThis checkout is at ' + codeRevision + ', so the running service has older or different code. Stop pid ' + running.pid + ' and start again to use this checkout.' : '') +
+    '\nUse the running URL, or set SCENE_REHEARSAL_DATA_DIR to a different absolute path for a separate library.')
+  process.exit(1)
+}
+// One service per data directory: whoever creates the lock first runs, others exit.
+const lockPath = join(root, 'service.lock')
+for (let attempt = 0; ; attempt++) {
+  try {
+    writeFileSync(lockPath, String(process.pid), { flag: 'wx', mode: 0o600 })
+    break
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'EEXIST') throw error
+    const owner = Number(readFileSync(lockPath, 'utf8'))
+    let alive = false
+    try { process.kill(owner, 0); alive = owner !== process.pid } catch { /* stale lock */ }
+    if (alive || attempt > 2) {
+      const live = readRuntime()
+      console.error('Scene Rehearsal is already starting or running for this data directory (pid ' + owner + (live ? ', ' + describe(live) : '') + '). No second instance was started.\nData: ' + root)
+      process.exit(1)
+    }
+    rmSync(lockPath, { force: true })
+  }
+}
 const blobDir = join(root, 'blobs')
 mkdirSync(blobDir, { mode: 0o700, recursive: true })
 const db = new DatabaseSync(join(root, 'review.sqlite'))
@@ -28,6 +71,7 @@ db.exec(`
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS revisions (digest TEXT PRIMARY KEY, parent TEXT, scene TEXT NOT NULL, links TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS head (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, digest TEXT NOT NULL, rev INTEGER NOT NULL, updated TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS plan_heads (plan TEXT PRIMARY KEY, digest TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS draft_reviews (revision TEXT PRIMARY KEY, checked TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, revision TEXT NOT NULL);
@@ -121,10 +165,30 @@ app.setErrorHandler((error, _req, reply) => {
 app.get('/api/session', async (_req, reply) => {
   return reply.header('Cache-Control', 'no-store').send({ token: reviewToken })
 })
+const startedAt = new Date().toISOString()
+app.get('/api/status', async () => ({ port, pid: process.pid, dataDir: root, revision: codeRevision, version: packageVersion, startedAt }))
+app.get('/api/spec', async req => {
+  const query = z.object({ scene: z.string().min(1).max(200), unapproved: z.enum(['1']).optional(), expect: sha.optional() }).parse(req.query)
+  const row = sha.safeParse(query.scene).success
+    ? db.prepare('SELECT digest, rev FROM drafts WHERE digest=?').get(query.scene)
+    : db.prepare('SELECT digest, rev FROM drafts WHERE key=?').get(query.scene)
+  if (!row) throw bad('Draft not found. Use the draft ID or storyboardId/sceneId.', 404)
+  const rev = revision(String(row.digest))
+  if (rev.scene.version !== 3) throw bad('Only placeholder drafts have an asset spec.', 409)
+  const approval = db.prepare("SELECT at FROM approvals WHERE revision=? AND kind='final'").get(rev.digest)
+  if (!approval && !query.unapproved) throw bad('Accept this draft in Scene Rehearsal before building assets from it, or pass unapproved for a preview.', 409)
+  const spec = buildAssetSpec({
+    draftId: rev.digest, draftRev: Number(row.rev), scene: rev.scene,
+    approvedAt: approval ? String(approval.at) : null,
+    reviewChecked: (db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest)?.checked as string | undefined) ?? null,
+  })
+  return query.expect ? { ...spec, check: { expected: query.expect, current: contentDigest(rev.scene), stale: query.expect !== contentDigest(rev.scene) } } : spec
+})
 app.get('/api/library', async () => ({
   head: head(),
   planHeads: db.prepare('SELECT plan, digest FROM plan_heads ORDER BY plan').all()
     .map(row => ({ plan: JSON.parse(String(row.plan)), digest: row.digest })),
+  drafts: db.prepare('SELECT key, digest, rev, updated FROM drafts ORDER BY key').all(),
   revisions: db.prepare('SELECT digest, parent, json_extract(scene,\'$.title\') AS title FROM revisions ORDER BY rowid DESC').all(),
 }))
 app.get('/api/revision/:digest', async req => {
@@ -137,14 +201,15 @@ app.get('/api/revision/:digest', async req => {
     const source = resolveSource(object.asset)
     return source ? [{ ...source, object: object.id }] : []
   })
-  return { ...rev, sources, notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
+  const draft = db.prepare('SELECT rev, updated FROM drafts WHERE digest=?').get(rev.digest)
+  return { ...rev, ...(draft ? { draftRev: draft.rev, updatedAt: draft.updated } : {}), sources, notes: notes.filter(n => n.revision === rev.digest || rev.links.includes(Number(n.id)))
     .map(n => ({ id: n.id, revision: n.revision, resolved: Boolean(n.resolved), ...JSON.parse(String(n.data)) })),
     draftReview: db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest),
     approvals: db.prepare('SELECT kind,at FROM approvals WHERE revision=?').all(rev.digest) }
 })
 app.post('/api/publish', async req => {
   requireRole(req.headers.authorization === 'Bearer ' + authorToken)
-  const input = z.strictObject({ request: z.string().min(1).max(100), parent: sha.nullable(), scene: manifestSchema, links: z.array(z.number().int().positive()).max(200).default([]) }).parse(req.body)
+  const input = z.strictObject({ request: z.string().min(1).max(100), parent: sha.nullable().default(null), scene: manifestSchema, links: z.array(z.number().int().positive()).max(200).default([]) }).parse(req.body)
   return transaction(() => {
     const checksum = hash(canonical(input))
     const previous = db.prepare('SELECT * FROM receipts WHERE id=?').get(input.request)
@@ -152,16 +217,32 @@ app.post('/api/publish', async req => {
       if (previous.request_hash !== checksum) throw bad('Request ID already used.', 409)
       return { revision: previous.revision }
     }
-    const plan = planKey(input.scene)
-    const base = plan ? db.prepare('SELECT digest FROM plan_heads WHERE plan=?').get(plan)?.digest : head()
-    if ((base ?? null) !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
-    const ancestors = new Set<string>()
-    if (plan && input.links.length) {
-      for (let cursor = input.parent; cursor; cursor = revision(cursor).parent) ancestors.add(cursor)
+    if (input.scene.version === 3) {
+      const key = input.scene.plan.storyboardId + '/' + input.scene.plan.sceneId
+      const existing = db.prepare('SELECT digest, rev FROM drafts WHERE key=?').get(key)
+      const digest = existing ? String(existing.digest) : hash(canonical({ draft: key }))
+      for (const link of input.links) {
+        const note = db.prepare('SELECT revision FROM notes WHERE id=?').get(link)
+        if (!note || note.revision !== digest) throw bad('Linked note not found on this draft.')
+      }
+      if (!existing) db.prepare('INSERT INTO revisions VALUES(?,?,?,?)').run(digest, null, JSON.stringify(input.scene), JSON.stringify(input.links))
+      const changed = existing && canonical(revision(digest).scene) !== canonical(input.scene)
+      if (changed) {
+        db.prepare('UPDATE revisions SET scene=?, links=? WHERE digest=?').run(JSON.stringify(input.scene), JSON.stringify(input.links), digest)
+        db.prepare('DELETE FROM approvals WHERE revision=?').run(digest)
+        db.prepare('DELETE FROM draft_reviews WHERE revision=?').run(digest)
+      }
+      const now = new Date().toISOString()
+      if (!existing) db.prepare('INSERT INTO drafts VALUES(?,?,1,?)').run(key, digest, now)
+      else if (changed) db.prepare('UPDATE drafts SET rev=rev+1, updated=? WHERE key=?').run(now, key)
+      mappings(revision(digest), false)
+      db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.request, checksum, digest)
+      return { revision: digest }
     }
+    const base = head()
+    if ((base ?? null) !== input.parent) throw bad('The base revision changed. Read the head before publishing.', 409)
     for (const link of input.links) {
-      const note = db.prepare('SELECT revision FROM notes WHERE id=?').get(link)
-      if (!note || (plan && !ancestors.has(String(note.revision)))) throw bad('Linked note not found in this draft history.')
+      if (!db.prepare('SELECT id FROM notes WHERE id=?').get(link)) throw bad('Linked note not found.')
     }
     const requiredSlots = input.parent ? revision(input.parent).scene.objects.filter(object => 'requiresAsset' in object && object.requiresAsset) : []
     if (requiredSlots.some(slot => !input.scene.objects.some(object => object.id === slot.id && 'requiresAsset' in object && object.requiresAsset && object.kind === slot.kind &&
@@ -174,6 +255,24 @@ app.post('/api/publish', async req => {
     mappings(revision(digest), false)
     db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.request, checksum, digest)
     return { revision: digest }
+  })
+})
+app.post('/api/revision/:digest/remove', async req => {
+  requireRole(req.headers.authorization === 'Bearer ' + authorToken)
+  const rev = getRevision(req.params)
+  if (db.prepare('SELECT 1 FROM drafts WHERE digest=?').get(rev.digest)) throw bad('A scene\'s live draft cannot be removed.', 409)
+  return transaction(() => {
+    const notes = db.prepare('SELECT id FROM notes WHERE revision=?').all(rev.digest).map(row => Number(row.id))
+    for (const id of notes) db.prepare('DELETE FROM note_decisions WHERE note=?').run(id)
+    db.prepare('DELETE FROM notes WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM approvals WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM draft_reviews WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM receipts WHERE revision=?').run(rev.digest)
+    db.prepare('DELETE FROM head WHERE digest=?').run(rev.digest)
+    db.prepare('DELETE FROM plan_heads WHERE digest=?').run(rev.digest)
+    db.prepare('UPDATE revisions SET parent=NULL WHERE parent=?').run(rev.digest)
+    db.prepare('DELETE FROM revisions WHERE digest=?').run(rev.digest)
+    return { removed: rev.digest }
   })
 })
 app.post('/api/revision/:digest/note', async req => {
@@ -228,7 +327,7 @@ app.post('/api/revision/:digest/export', async req => {
       ...(entry.legacy && (hashCounts.get(source.hash) ?? 0) > 1 ? { legacy: true } : {}) })
     blobs[path] = entry.file.toString('base64')
   }
-  const manifest = { format: 'scene-rehearsal-' + rev.scene.version, revision: rev.digest, parent: rev.parent, links: rev.links, scene: rev.scene, approval, assets,
+  const manifest = { format: 'scene-rehearsal-' + rev.scene.version, revision: rev.scene.version === 3 ? hash(canonical({ parent: rev.parent, scene: rev.scene, links: rev.links })) : rev.digest, parent: rev.parent, links: rev.links, scene: rev.scene, approval, assets,
     ...(rev.scene.version === 3 ? { draftReview: db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest) } : {}) }
   return { digest: hash(canonical(manifest)), package: { manifest, blobs } }
 })
@@ -247,14 +346,21 @@ app.post('/api/assets/import', { bodyLimit: 190_000_000 }, async req => {
 
 app.post('/api/agent/assets/import', { bodyLimit: 190_000_000 }, async req => {
   requireRole(req.headers.authorization === 'Bearer ' + authorToken)
+  const foundryDir = process.env.MESH_FOUNDRY_DATA_DIR ?? join(homedir(), 'Library/Application Support/Mesh Foundry')
   const { bundle, expected, meshFoundryDataDir } = z.strictObject({
     bundle: z.unknown(),
-    meshFoundryDataDir: z.string().refine(isAbsolute, 'Use the absolute Mesh Foundry data directory from the copied prompt.'),
+    meshFoundryDataDir: z.string().refine(isAbsolute, 'Use an absolute Mesh Foundry data directory.').optional(),
     expected: sourceIdentity.extend({ clips: z.array(z.string().min(1)) }),
   }).parse(req.body)
-  const foundryPort = Number(process.env.SCENE_REHEARSAL_MESH_FOUNDRY_PORT)
+  let foundryPort = Number(process.env.SCENE_REHEARSAL_MESH_FOUNDRY_PORT)
+  if (!process.env.SCENE_REHEARSAL_MESH_FOUNDRY_PORT) {
+    try {
+      const { url } = JSON.parse(readFileSync(join(foundryDir, 'runtime.json'), 'utf8')) as { url: string }
+      foundryPort = Number(new URL(url).port)
+    } catch { /* not running */ }
+  }
   if (!Number.isInteger(foundryPort) || foundryPort < 1024 || foundryPort > 65535 || foundryPort === port) {
-    throw bad('Configure SCENE_REHEARSAL_MESH_FOUNDRY_PORT for the running trusted local Mesh Foundry library.', 503)
+    throw bad('Start Mesh Foundry so Scene Rehearsal can find it.', 503)
   }
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(expected.project)) throw bad('Invalid Mesh Foundry project ID.')
   const { bytes, source } = await readAcceptedModel(bundle, expected.asset)
@@ -268,7 +374,7 @@ app.post('/api/agent/assets/import', { bodyLimit: 190_000_000 }, async req => {
     const session = await fetch(foundry + '/api/session', options)
     if (!session.ok) throw Error('Mesh Foundry session request failed.')
     const { dataRoot } = z.object({ dataRoot: z.string().refine(isAbsolute) }).parse(await session.json())
-    if (realpathSync(dataRoot) !== realpathSync(meshFoundryDataDir)) {
+    if (realpathSync(dataRoot) !== realpathSync(meshFoundryDataDir ?? foundryDir)) {
       throw bad('The configured Mesh Foundry service is running a different library than the copied prompt.', 409)
     }
     const response = await fetch(foundry + '/api/projects/' + encodeURIComponent(expected.project), options)
@@ -315,10 +421,20 @@ app.get('/api/assets/:digest', async (req, reply) => {
 await app.register(serveStatic, { root: join(import.meta.dirname, 'dist') })
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/')
   ? reply.sendFile('index.html') : reply.code(404).send({ error: 'Not found.' }))
-await app.listen({ host: '127.0.0.1', port })
-console.log('Scene Rehearsal at ' + origin + '\nData: ' + root)
+try {
+  await app.listen({ host: '127.0.0.1', port })
+} catch (error) {
+  if ((error as { code?: string }).code !== 'EADDRINUSE' || process.env.SCENE_REHEARSAL_PORT) throw error
+  await app.listen({ host: '127.0.0.1', port: 0 })
+  port = (app.server.address() as { port: number }).port
+  origin = 'http://127.0.0.1:' + port
+}
+writeFileSync(runtimePath, JSON.stringify({ url: origin, pid: process.pid, port, dataDir: root, revision: codeRevision, version: packageVersion, startedAt }), { mode: 0o600 })
+console.log('Scene Rehearsal at ' + origin + ' (pid ' + process.pid + ', code ' + codeRevision + ')\nData: ' + root)
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
   await app.close()
   db.close()
+  rmSync(runtimePath, { force: true })
+  rmSync(lockPath, { force: true })
   process.exit(0)
 })

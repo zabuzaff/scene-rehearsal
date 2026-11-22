@@ -43,7 +43,8 @@ test('publish, play, review and export a placeholder draft beside a legacy histo
     assert.equal(evaluate(initial.scene, 'interruption', 98).actors[0].activity, 'inspect')
     const list = await cli('list')
     assert.equal(list.head, legacy.revision)
-    assert.deepEqual(list.planHeads, [{ plan: scene.plan, digest: draft.digest }])
+    assert.deepEqual(list.drafts.map(({ key, digest }: { key: string; digest: string }) => ({ key, digest })),
+      [{ key: scene.plan.storyboardId + '/' + scene.plan.sceneId, digest: draft.digest }])
     assert.equal(evaluate(scene, 'arrival', 9).trace.length, 0)
     assert.equal(evaluate(scene, 'arrival', 10).activity, 'Cross the landing')
     assert.equal(evaluate(scene, 'arrival', 30).activity, 'Reveal the beacon')
@@ -54,8 +55,6 @@ test('publish, play, review and export a placeholder draft beside a legacy histo
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + credential },
       body: JSON.stringify(body),
     })
-    assert.equal((await post('publish', { request: 'wrong-root', parent: legacy.revision, scene }, author)).status, 409)
-    assert.equal((await post('publish', { request: 'duplicate-root', parent: null, scene }, author)).status, 409)
     const path = 'revision/' + draft.digest + '/'
     const review = { checked: 'Inspected grouped placement, the traversal cue and beacon framing.' }
     assert.equal((await post(path + 'export', {})).status, 400)
@@ -71,19 +70,37 @@ test('publish, play, review and export a placeholder draft beside a legacy histo
     assert.deepEqual(pkg.manifest.draftReview, review)
     assert.deepEqual(pkg.blobs, {})
 
-    const child = await post('publish', { request: 'child', parent: draft.digest, scene }, author)
-    assert.ok(child.ok)
-    const { revision } = await child.json()
-    assert.deepEqual((await cli('read', revision)).approvals, [])
+    // An unchanged republish keeps the approval; an edit overwrites the same draft and resets it.
+    assert.ok((await post('publish', { request: 'same', scene }, author)).ok)
+    assert.equal((await cli('read', draft.digest)).approvals.length, 1)
+    const pin = await post(path + 'note', { scenario: scene.scenarios[0].id, tick: 0, text: 'Move the beacon.', object: scene.objects[0].id, camera: [0, 5, 5], target: [0, 0, 0] })
+    assert.ok(pin.ok)
+    const pinned = (await cli('read', draft.digest)).notes.length
+    assert.equal(pinned, 1)
+    const edited = { ...scene, intent: scene.intent + ' Revised.' }
+    const update = await post('publish', { request: 'edit', scene: edited }, author)
+    assert.ok(update.ok)
+    assert.deepEqual(await update.json(), { revision: draft.digest })
+    assert.equal((await cli('read', draft.digest)).draftRev, 2)
+    const after = await cli('read', draft.digest)
+    assert.equal(after.scene.intent, edited.intent)
+    assert.deepEqual(after.approvals, [])
+    assert.equal(after.notes.length, pinned)
+    assert.equal(after.draftReview, undefined)
+    assert.equal((await cli('list')).drafts.length, 1)
+    assert.ok((await post(path + 'approve', { kind: 'final', review })).ok)
     assert.deepEqual(await cli('publish', sample), published)
-    const nextPlan = { ...scene.plan, planRevision: 3, approvalId: 'fictional-owner-approval-2' }
-    const nextDraft = await post('publish', { request: 'next-plan', parent: null, scene: { ...scene, plan: nextPlan } }, author)
-    assert.ok(nextDraft.ok)
-    const { revision: nextDigest } = await nextDraft.json()
-    assert.deepEqual(await cli('list').then(({ head, planHeads }) => ({ head, planHeads })), {
-      head: legacy.revision,
-      planHeads: [{ plan: scene.plan, digest: revision }, { plan: nextPlan, digest: nextDigest }],
-    })
+    // Old history can be removed, a scene's live draft cannot.
+    assert.equal((await post('revision/' + draft.digest + '/remove', {}, author)).status, 409)
+    assert.equal((await post('revision/' + legacy.revision + '/remove', {}, token)).status, 403)
+    assert.deepEqual(await cli('remove', legacy.revision), { removed: legacy.revision })
+    assert.equal((await cli('list')).head, undefined)
+    assert.ok((await cli('read', draft.digest)).notes.length === 1)
+    // A different scene gets its own draft; plan fields are optional.
+    const other = { ...scene, plan: { storyboardId: scene.plan.storyboardId, sceneId: 'other-scene' } }
+    const second = await post('publish', { request: 'other', scene: other }, author)
+    assert.ok(second.ok)
+    assert.equal((await cli('list')).drafts.length, 2)
   } finally {
     if (service.exitCode === null && service.signalCode === null) {
       const exited = once(service, 'exit')

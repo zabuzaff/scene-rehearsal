@@ -30,7 +30,9 @@ npm run cli -- verify /absolute/path/to/package.json OWNER_CONFIRMED_SHA256
 
 For a new scene, start from the exact owner-approved Loom plan and publish a v3 placeholder draft. Inspect its placement and cues, record what was checked and approve the exact draft for implementation. [Plan draft authoring and Loom writeback](docs/PLAN_DRAFTS.md) covers the request shape, clean draft targets, review evidence and handoff export.
 
-Optional model import remains available in the inspector. Versions 1 and 2 retain their existing playback, asset mapping and approval rules.
+Assets are built to a spec derived from the accepted draft; see [Asset spec for Mesh Foundry](docs/PLAN_DRAFTS.md#asset-spec-for-mesh-foundry) (`npm run cli -- spec DRAFT`, JSON shape included). `npm start -- --status` reports the running service's port, pid, data directory and code revision, and a second start for the same data directory exits with code 1 and says on stderr where the first one runs.
+
+Optional model import (inspector and `import-model`) is deprecated: Rehearsal no longer imports or fits Mesh Foundry assets for new scenes. It stays only so stored drafts keep working. Versions 1 and 2 retain their existing playback, asset mapping and approval rules.
 
 ## Checks
 
@@ -40,7 +42,7 @@ Run `npm run typecheck`, `npm test`, and `npm run build`. Use an isolated local 
 
 ## Historical Kairo fixture (v2)
 
-The [Kairo plan](docs/KAIRO_REHEARSAL_PLAN.md) and [authored draft](fixtures/kairo-office.json) cover the two-station office with synthetic quiet, interruption and recovery scenarios. To publish it locally, use an empty dedicated library. Use the same data directory and port for the CLI and later starts.
+The [Kairo plan](docs/KAIRO_REHEARSAL_PLAN.md) and [authored draft](fixtures/kairo-office.json) cover the two-station office with synthetic quiet, interruption and recovery scenarios. To publish it locally, use an isolated library: the overrides below are for tests and fixtures only. Normal use needs no variables.
 
 ```sh
 export SCENE_REHEARSAL_DATA_DIR=/private/tmp/kairo-rehearsal-local
@@ -61,7 +63,7 @@ Open http://127.0.0.1:4332 and select **Kairo · Research and collector office**
 
 ### Import from a Mesh Foundry handoff prompt
 
-Start Scene Rehearsal with `SCENE_REHEARSAL_MESH_FOUNDRY_PORT` set to the port of the running trusted local Mesh Foundry library. The agent uses Mesh Foundry's CLI to export a private project bundle, then runs `npm run cli -- import-model /absolute/import-request.json` with the usual rehearsal library and port settings. The request has `bundlePath` (the absolute bundle path) `meshFoundryDataDir` (the absolute source data directory from the prompt), and `expected` (the copied `project`, `asset`, `revision`, `hash` and ordered `clips` fields). The server checks the GLB and its clips, then compares the exact source identity with the configured Mesh Foundry service's live model-stage acceptance after verifying the service reports the same library. Use the returned `sourceKey` when publishing the v2 draft. This author workflow leaves final approval and export in the local browser.
+Mesh Foundry is found through its own `runtime.json`. Start it before importing (`SCENE_REHEARSAL_MESH_FOUNDRY_PORT` still overrides). The agent uses Mesh Foundry's CLI to export a private project bundle, then runs `npm run cli -- import-model /absolute/import-request.json` with the usual rehearsal library and port settings. The request has `bundlePath` (the absolute bundle path) optional `meshFoundryDataDir` (only for a non-default Mesh Foundry library), and `expected` (the copied `project`, `asset`, `revision`, `hash` and ordered `clips` fields). The server checks the GLB and its clips, then compares the exact source identity with the configured Mesh Foundry service's live model-stage acceptance after verifying the service reports the same library. Use the returned `sourceKey` when publishing the v2 draft. This author workflow leaves final approval and export in the local browser.
 
 ### Binding one piece of a GLB
 
