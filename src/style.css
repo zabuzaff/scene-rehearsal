@@ -130,6 +130,7 @@ summary{cursor:pointer;font-size:.85rem}
 }
 .brand-mark { width: 32px; height: 32px; flex: none; }
 .shell nav { min-width: 0; }
+.service-info { margin: 0 0 0 auto; color: var(--muted); font: 12px var(--font-ui); white-space: nowrap; }
 .shell .project { max-width: min(340px, 100%); gap: 25px; padding: 10px; font-size: 13px; }
 .select-menu.project-menu { min-width: min(280px, calc(100vw - 24px)); }
 .select-option[data-state=checked] { color: var(--accent); }
@@ -215,6 +216,7 @@ input[type=file]::file-selector-button { font: inherit; color: var(--text); bord
   .brand { font-size: clamp(17px, 5.7vw, 23px); }
   .brand-mark { width: 26px; height: 26px; }
   .shell-divider { display: none; }
+  .service-info { margin: 0; white-space: normal; }
   .shell nav { width: 100%; }
   .shell .project { min-height: 30px; padding: 3px 0; }
   .workbench { padding: 16px 12px 12px; }

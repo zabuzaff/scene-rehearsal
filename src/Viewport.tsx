@@ -165,8 +165,10 @@ export default function Viewport({ manifest, scenario, tick, view, onView, onPic
     scene.add(marker)
     const resize = new ResizeObserver(() => {
       camera.aspect = element.clientWidth / Math.max(1, element.clientHeight)
-      const minimumHorizontalFov = T.MathUtils.degToRad(20)
-      camera.fov = Math.max(40, T.MathUtils.radToDeg(2 * Math.atan(Math.tan(minimumHorizontalFov) / Math.max(.1, camera.aspect))))
+      // Preserve room for the cutaway's outer walls in narrow and split viewports.
+      const minimumHorizontalFov = T.MathUtils.degToRad(52)
+      const verticalFov = 2 * Math.atan(Math.tan(minimumHorizontalFov / 2) / Math.max(.1, camera.aspect))
+      camera.fov = Math.max(40, T.MathUtils.radToDeg(verticalFov))
       camera.updateProjectionMatrix()
       renderer.setSize(element.clientWidth, element.clientHeight)
     })

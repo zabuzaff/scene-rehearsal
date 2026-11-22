@@ -50,6 +50,8 @@ function Shell() {
     }).catch(() => {})
   }, [])
   useEffect(refreshLibrary, [location.pathname, refreshLibrary])
+  const [service, setService] = useState<{ port: number; pid: number; dataDir: string; revision: string; version: string; startedAt: string }>()
+  useEffect(() => { void api<NonNullable<typeof service>>('status').then(setService).catch(() => {}) }, [])
   const refreshOnOpen = (isOpen: boolean) => { if (isOpen) refreshLibrary() }
   return <Tooltip.Provider>
     <header className="shell"><Link viewTransition className="brand" to="/"><img className="brand-mark" src="/favicon.svg" alt=""/><span>Scene Rehearsal<span className="brand-period">.</span></span></Link>
@@ -57,6 +59,8 @@ function Shell() {
       <nav aria-label="Primary"><StudioSelect label="Open revision" variant="project" value={activeRevision} onOpenChange={refreshOnOpen}
         options={[{ value: '', label: 'Rehearsal library' }, ...revisions.map(rev => ({ value: rev.digest, label: rev.title, description: rev.digest.slice(0, 10) }))]}
         onChange={id => navigate(id ? '/revision/' + id : '/', { viewTransition: true })}/></nav>
+      {service && <p className="service-info" title={'Data: ' + service.dataDir + '\nStarted ' + new Date(service.startedAt).toLocaleString()}>
+        Port {service.port} · pid {service.pid} · code {service.revision} · v{service.version}</p>}
     </header>
     <main key={location.pathname.split('/').slice(0, 3).join('/')} className="page">
       <Routes><Route path="/" element={<Library/>}/><Route path="/revision/:digest/:scenario?" element={<Workbench revisions={revisions} onPickerOpen={refreshOnOpen}/>}/>

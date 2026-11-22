@@ -30,7 +30,9 @@ npm run cli -- verify /absolute/path/to/package.json OWNER_CONFIRMED_SHA256
 
 For a new scene, start from the exact owner-approved Loom plan and publish a v3 placeholder draft. Inspect its placement and cues, record what was checked and approve the exact draft for implementation. [Plan draft authoring and Loom writeback](docs/PLAN_DRAFTS.md) covers the request shape, clean draft targets, review evidence and handoff export.
 
-Optional model import remains available in the inspector. Versions 1 and 2 retain their existing playback, asset mapping and approval rules.
+Assets are built to a spec derived from the accepted draft; see [Asset spec for Mesh Foundry](docs/PLAN_DRAFTS.md#asset-spec-for-mesh-foundry) (`npm run cli -- spec DRAFT`, JSON shape included). `npm start -- --status` reports the running service's port, pid, data directory and code revision, and a second start for the same data directory exits with code 1 and says on stderr where the first one runs.
+
+Optional model import (inspector and `import-model`) is deprecated: Rehearsal no longer imports or fits Mesh Foundry assets for new scenes. It stays only so stored drafts keep working. Versions 1 and 2 retain their existing playback, asset mapping and approval rules.
 
 ## Checks
 

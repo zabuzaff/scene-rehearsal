@@ -10,26 +10,40 @@ import { assetClips, draftReviewSchema, defaultRoom, missingAsset, manifestSchem
 import { canonical, hash, sourceIdentity, sourceKey, sourceSchema } from './src/handoff.ts'
 import { acceptedModel, readAcceptedModel } from './src/mesh.ts'
 import { verifyGlbNode } from './src/glb-node.ts'
+import { buildAssetSpec, contentDigest } from './src/spec.ts'
+import { execFileSync } from 'node:child_process'
 
 const root = process.env.SCENE_REHEARSAL_DATA_DIR ?? join(homedir(), 'Library/Application Support/Scene Rehearsal')
 let port = Number(process.env.SCENE_REHEARSAL_PORT ?? 4331)
 if (!isAbsolute(root) || !Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Invalid local configuration.')
 let origin = 'http://127.0.0.1:' + port
 const runtimePath = join(root, 'runtime.json')
+const checkoutRoot = import.meta.dirname
+const git = (...args: string[]) => { try { return execFileSync('git', args, { cwd: checkoutRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' } }
+const packageVersion = (JSON.parse(readFileSync(join(checkoutRoot, 'package.json'), 'utf8')) as { version: string }).version
+const codeRevision = (git('rev-parse', '--short', 'HEAD') || 'unknown') + (git('status', '--porcelain') ? '+uncommitted' : '')
+type RuntimeInfo = { url: string; pid: number; port?: number; dataDir?: string; revision?: string; version?: string; startedAt?: string }
+const readRuntime = () => { try { return JSON.parse(readFileSync(runtimePath, 'utf8')) as RuntimeInfo } catch { return undefined } }
+const isAlive = (pid: unknown) => { if (!Number.isInteger(pid)) return false; try { process.kill(pid as number, 0); return true } catch { return false } }
+const describe = (info: RuntimeInfo) => info.url + ' (pid ' + info.pid + ', port ' + (info.port ?? new URL(info.url).port) + ', code ' + (info.revision ?? 'unknown') + ', started ' + (info.startedAt ?? 'unknown') + ')'
 if (process.argv.includes('--status')) {
-  console.log(JSON.stringify({ root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite') }))
+  const info = readRuntime()
+  const live = info && isAlive(info.pid) ? info : undefined
+  console.log(JSON.stringify({
+    root: existsSync(root) ? realpathSync(root) : root, origin, database: join(root, 'review.sqlite'),
+    checkout: { path: checkoutRoot, revision: codeRevision, version: packageVersion },
+    running: live ? { ...live, port: live.port ?? Number(new URL(live.url).port), dataDir: live.dataDir ?? root, stale: live.revision !== codeRevision } : null,
+  }))
   process.exit(0)
 }
 mkdirSync(root, { recursive: true, mode: 0o700 })
 if (realpathSync(root) !== root) throw Error('Use the canonical data path.')
-const running = existsSync(runtimePath) ? (() => { try { return JSON.parse(readFileSync(runtimePath, 'utf8')) as { url: string; pid: number } } catch { return undefined } })() : undefined
-if (running && Number.isInteger(running.pid)) {
-  let alive = false
-  try { process.kill(running.pid, 0); alive = true } catch { /* stale file */ }
-  if (alive) {
-    console.log('Scene Rehearsal already running at ' + running.url + '\nData: ' + root)
-    process.exit(0)
-  }
+const running = readRuntime()
+if (running && isAlive(running.pid)) {
+  console.error('Scene Rehearsal is already running for this data directory, so no second instance was started.\nRunning: ' + describe(running) + '\nData: ' + root +
+    (running.revision && running.revision !== codeRevision ? '\nThis checkout is at ' + codeRevision + ', so the running service has older or different code. Stop pid ' + running.pid + ' and start again to use this checkout.' : '') +
+    '\nUse the running URL, or set SCENE_REHEARSAL_DATA_DIR to a different absolute path for a separate library.')
+  process.exit(1)
 }
 // One service per data directory: whoever creates the lock first runs, others exit.
 const lockPath = join(root, 'service.lock')
@@ -43,8 +57,9 @@ for (let attempt = 0; ; attempt++) {
     let alive = false
     try { process.kill(owner, 0); alive = owner !== process.pid } catch { /* stale lock */ }
     if (alive || attempt > 2) {
-      console.log('Scene Rehearsal is already starting or running for this data directory.')
-      process.exit(0)
+      const live = readRuntime()
+      console.error('Scene Rehearsal is already starting or running for this data directory (pid ' + owner + (live ? ', ' + describe(live) : '') + '). No second instance was started.\nData: ' + root)
+      process.exit(1)
     }
     rmSync(lockPath, { force: true })
   }
@@ -149,6 +164,25 @@ app.setErrorHandler((error, _req, reply) => {
 })
 app.get('/api/session', async (_req, reply) => {
   return reply.header('Cache-Control', 'no-store').send({ token: reviewToken })
+})
+const startedAt = new Date().toISOString()
+app.get('/api/status', async () => ({ port, pid: process.pid, dataDir: root, revision: codeRevision, version: packageVersion, startedAt }))
+app.get('/api/spec', async req => {
+  const query = z.object({ scene: z.string().min(1).max(200), unapproved: z.enum(['1']).optional(), expect: sha.optional() }).parse(req.query)
+  const row = sha.safeParse(query.scene).success
+    ? db.prepare('SELECT digest, rev FROM drafts WHERE digest=?').get(query.scene)
+    : db.prepare('SELECT digest, rev FROM drafts WHERE key=?').get(query.scene)
+  if (!row) throw bad('Draft not found. Use the draft ID or storyboardId/sceneId.', 404)
+  const rev = revision(String(row.digest))
+  if (rev.scene.version !== 3) throw bad('Only placeholder drafts have an asset spec.', 409)
+  const approval = db.prepare("SELECT at FROM approvals WHERE revision=? AND kind='final'").get(rev.digest)
+  if (!approval && !query.unapproved) throw bad('Accept this draft in Scene Rehearsal before building assets from it, or pass unapproved for a preview.', 409)
+  const spec = buildAssetSpec({
+    draftId: rev.digest, draftRev: Number(row.rev), scene: rev.scene,
+    approvedAt: approval ? String(approval.at) : null,
+    reviewChecked: (db.prepare('SELECT checked FROM draft_reviews WHERE revision=?').get(rev.digest)?.checked as string | undefined) ?? null,
+  })
+  return query.expect ? { ...spec, check: { expected: query.expect, current: contentDigest(rev.scene), stale: query.expect !== contentDigest(rev.scene) } } : spec
 })
 app.get('/api/library', async () => ({
   head: head(),
@@ -395,8 +429,8 @@ try {
   port = (app.server.address() as { port: number }).port
   origin = 'http://127.0.0.1:' + port
 }
-writeFileSync(runtimePath, JSON.stringify({ url: origin, pid: process.pid, dataDir: root }), { mode: 0o600 })
-console.log('Scene Rehearsal at ' + origin + '\nData: ' + root)
+writeFileSync(runtimePath, JSON.stringify({ url: origin, pid: process.pid, port, dataDir: root, revision: codeRevision, version: packageVersion, startedAt }), { mode: 0o600 })
+console.log('Scene Rehearsal at ' + origin + ' (pid ' + process.pid + ', code ' + codeRevision + ')\nData: ' + root)
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
   await app.close()
   db.close()

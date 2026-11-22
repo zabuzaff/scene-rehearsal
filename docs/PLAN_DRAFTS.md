@@ -36,3 +36,160 @@ The approved handoff is a `scene-rehearsal-3` package containing the exact plan,
 ## Loom integration
 
 Loom records the plan, then a `draft` link (`url`, `draftId`, `scenarioId`) after reading this service. Loom's start-implementation prompt reads the draft back, requires the final approval, and continues in the game. Package digests identify one export snapshot only.
+
+## Asset spec for Mesh Foundry
+
+Assets are built to the rehearsal, not the other way round: Loom plans, Rehearsal fixes placeholder layout, camera, routes and cues, then Foundry builds each asset to the spec derived from the accepted draft. Rehearsal does not import or fit Foundry assets in this flow.
+
+```sh
+npm --silent run cli -- spec DRAFT_ID_OR_STORYBOARD/SCENE [--expect CONTENT_DIGEST] [--unapproved] [--out /absolute/spec.json]
+```
+
+`GET /api/spec?scene=DRAFT_ID_OR_STORYBOARD/SCENE[&expect=CONTENT_DIGEST][&unapproved=1]` returns the same JSON. Without `unapproved` the draft must be accepted (409 otherwise). `--out` writes the file atomically and prints only `{ written, contentDigest, specDigest }`.
+
+**Staleness.** `source.contentDigest` is the SHA-256 of the draft scene content (the draft ID itself never changes). Store it with the built asset. Pass it back as `--expect` (or `expect=`): the response gains `check: { expected, current, stale }` and the CLI exits with code 3 when stale. Any edit to the draft also clears acceptance. `specDigest` is the SHA-256 of the canonical spec without `specDigest`.
+
+**Authoring fields** (all optional, in the published draft):
+
+- `scaleReference`: `{ asset, label?, height? }`, scene level. `asset` is the Foundry asset ID of the scale reference (for example the baseline character); `height` is its height in metres.
+- `objects[].build`: `{ anchor?: "base-center" | "center", walkable?: boolean, clearance?: [{ id, label, size: [x,y,z], offset?: [x,y,z] }], notes? }`. `anchor` defaults to `base-center`. `clearance` volumes (for example a door passage) are in the object's local frame: `offset` from its centre, rotated with it. `walkable: true` marks floors and decks so walk routes are not reported against them.
+- `scenarios[].events[].targets`: `[{ object, interact?: boolean, clip?: string }]`. An object is `interactive` when a cue targets it with `interact: true` or a `clip`. `clip` names an animation clip the asset must contain.
+
+**Derived by Rehearsal.** `dimensions` is `size * scale` in metres. Every traversal `route` cue adds a keep-clear corridor (1 m wide, 1.8 m tall, above a 0.3 m step height) per segment to each non-walkable piece within 1.5 m of it. `intersectsPlaceholder` and a top-level `warnings` entry say when the placeholder already overlaps the corridor. The overlap test is exact for Y-axis rotation and approximate for tilted pieces. Units are metres, Y-up, rotations are Three.js Euler XYZ in radians.
+
+Shape (`version` 1; new fields are only ever added with a version bump):
+
+```json
+{
+  "format": "scene-rehearsal-asset-spec",
+  "version": 1,
+  "units": {
+    "length": "meter",
+    "up": "Y",
+    "rotation": "euler-xyz-radians"
+  },
+  "source": {
+    "draftId": "06400e00d0af000d000000000000000000000000000000000000000000000000",
+    "storyboardId": "yard",
+    "sceneId": "gate",
+    "title": "Gate yard",
+    "draftRev": 2,
+    "contentDigest": "ab78969bf378d38664204b59252e2f2eb220070dc4ac7846b613ebf4e546b610",
+    "approved": true,
+    "approvedAt": "2026-11-22T10:00:00.000Z",
+    "reviewChecked": "Checked the gate."
+  },
+  "scaleReference": {
+    "asset": "baseline-character",
+    "height": 1.75
+  },
+  "pieces": [
+    {
+      "id": "gate",
+      "name": "Gate",
+      "kind": "box",
+      "includes": [],
+      "dimensions": [
+        2,
+        2,
+        0.2
+      ],
+      "position": [
+        0,
+        1,
+        -2
+      ],
+      "rotationEuler": [
+        0,
+        0,
+        0
+      ],
+      "pivot": {
+        "anchor": "base-center",
+        "position": [
+          0,
+          0,
+          -2
+        ]
+      },
+      "interactive": true,
+      "animationClips": [
+        "open"
+      ],
+      "clearance": [
+        {
+          "id": "passage",
+          "label": "Door passage",
+          "kind": "authored",
+          "center": [
+            0,
+            1,
+            -1.5
+          ],
+          "size": [
+            1.2,
+            2.1,
+            1
+          ],
+          "rotationEuler": [
+            0,
+            0,
+            0
+          ],
+          "intersectsPlaceholder": false
+        },
+        {
+          "id": "main/walk/1",
+          "label": "Keep clear: Walk to gate walk route",
+          "kind": "route",
+          "center": [
+            0,
+            0.95,
+            1.5
+          ],
+          "size": [
+            6,
+            1.8,
+            1
+          ],
+          "rotationEuler": [
+            0,
+            1.570796,
+            0
+          ],
+          "cue": {
+            "scenario": "main",
+            "event": "walk"
+          },
+          "intersectsPlaceholder": false
+        }
+      ],
+      "cues": [
+        {
+          "scenario": "main",
+          "event": "open",
+          "tick": 40,
+          "label": "Gate opens",
+          "intent": "The gate swings open."
+        }
+      ],
+      "placementNotes": [
+        "Build to fit inside 2 x 2 x 0.2 m (width x height x depth in the piece frame) with the pivot at the bottom centre.",
+        "Opens inward."
+      ]
+    }
+  ],
+  "warnings": [],
+  "specDigest": "91d726b1fb60bb9b905148829cb4d6731e95af26998f92991fcc8b8db13c24e8"
+}
+```
+
+Field notes: `includes` lists the piece IDs the placeholder represents. `position`/`rotationEuler` describe the placeholder centre. `pivot.position` is where the asset origin goes. `cues` lists the cues that target the piece. Clearance entries have `kind` `authored` or `route`, a world-space `center`, `size` and `rotationEuler`, and `cue` for routes. Mesh Foundry accepts the same document as an optional spec and reads these fields by name.
+
+## Deprecated: Foundry import and model binding
+
+Owner decision 2026-11-17: Rehearsal does not import or fit Foundry assets; Foundry builds to the spec above. The following remain only for stored v1/v2 drafts and legacy bindings, and are candidates for later removal: `import-model` CLI and `POST /api/agent/assets/import`, `POST /api/assets/import` and the inspector import form, `src/mesh.ts` live acceptance checks, `sourceKey` and v2 `asset.source`/`clips`/`node` bindings (v3 `objects[].asset` still validates), `src/glb-node.ts`/`model-instance.ts`. `GET /api/assets/:digest` and the viewer paths must stay to render stored revisions.
+
+## Service status and single instance
+
+`npm start -- --status` prints JSON with `root`, `origin`, `database`, `checkout` (path, git short SHA with `+uncommitted` when the tree is dirty, package version) and `running` (`url`, `pid`, `port`, `dataDir`, `revision`, `version`, `startedAt`, and `stale` when the running code differs from this checkout), or `running: null`. The same details come from `GET /api/status` and show in the app header. A second `npm start` for the same data directory starts nothing and exits with code 1. It prints (to stderr) where the instance runs (URL, pid, port, code revision, start time) and warns when the running code is older than this checkout. Different data directories (and ports) mean separate libraries, so the data directory is always shown.

@@ -34,6 +34,9 @@ test('the CLI starts and finds the service from the data directory alone', { tim
     assert.deepEqual((await cli('list')).drafts, [])
     const again = JSON.parse(await readFile(join(root, 'runtime.json'), 'utf8'))
     assert.equal(again.pid, info.pid)
+    // A second start for the same data directory exits non-zero and names the running instance.
+    await assert.rejects(promisify(execFile)(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.ts'], { env }), (error: { code?: number; stderr?: string }) =>
+      error.code === 1 && /already running/.test(error.stderr ?? '') && (error.stderr ?? '').includes('pid ' + info.pid))
   } finally {
     if (pid) process.kill(pid)
     await new Promise(resolve => setTimeout(resolve, 300))
